@@ -1,0 +1,22 @@
+name: Auto Sniper
+on:
+  schedule:
+    - cron: '*/5 4-10 * * 1-5' # सोमवार से शुक्रवार, हर 5 मिनट में (IST 9:30 AM - 3:30 PM)
+  workflow_dispatch: # मैन्युअल चलाने के लिए
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.9'
+      - name: Run Script
+        env:
+          DHAN_CLIENT_ID: ${{ secrets.DHAN_CLIENT_ID }}
+          DHAN_ACCESS_TOKEN: ${{ secrets.DHAN_ACCESS_TOKEN }}
+        run: |
+          pip install pandas yfinance requests pytz
+          python algo.py
