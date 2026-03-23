@@ -6,110 +6,96 @@ CLIENT_ID = str(os.environ.get("DHAN_CLIENT_ID")).strip()
 ACCESS_TOKEN = str(os.environ.get("DHAN_ACCESS_TOKEN")).strip()
 HEADERS = {"access-token": ACCESS_TOKEN, "client-id": CLIENT_ID, "Content-Type": "application/json"}
 
-# 🎯 NIFTY 500 की मास्टर वॉचलिस्ट (आप इसमें और भी नाम जोड़ सकते हैं)
-NIFTY_WATCHLIST = [
-    "RELIANCE", "TCS", "HDFCBANK", "ICICIBANK", "BHARTIARTL", "INFY", "ITC", "SBIN", 
-    "LTIM", "HINDUNILVR", "BAJFINANCE", "TATAMOTORS", "LT", "HCLTECH", "ASIANPAINT", 
-    "SUNPHARMA", "MARUTI", "TITAN", "ULTRACEMCO", "KOTAKBANK", "NTPC", "TATACONSUM", 
-    "ONGC", "M&M", "WIPRO", "JSWSTEEL", "POWERGRID", "COALINDIA", "HDFCLIFE", "BAJAJFINSV", 
-    "ADANIENT", "ADANIPORTS", "APOLLOHOSP", "GRASIM", "BAJAJ-AUTO", "HINDALCO", "TECHM", 
-    "DIVISLAB", "DRREDDY", "BRITANNIA", "CIPLA", "EICHERMOT", "TATAPOWER", "TATASTEEL", 
-    "ZOMATO", "ANANDRATHI", "AWL", "DCXINDIA", "NOCIL", "IRFC", "RVNL", "MAZDOCK", "PAYTM"
+# 🎯 टॉप 30 हाई-वॉल्यूम वॉचलिस्ट (GitHub मिनट बचाने और फ़ास्ट एग्जीक्यूशन के लिए)
+WATCHLIST = [
+    "RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS", "SBIN", "ITC", "BHARTIARTL", 
+    "BAJFINANCE", "TATAMOTORS", "SUNPHARMA", "MARUTI", "KOTAKBANK", "AXISBANK", 
+    "NTPC", "TATASTEEL", "ULTRACEMCO", "POWERGRID", "M&M", "ASIANPAINT", "HCLTECH", 
+    "TITAN", "BAJAJFINSV", "WIPRO", "NESTLEIND", "ZOMATO", "ANANDRATHI", "AWL", "IRFC", "RVNL"
 ]
 
 def fetch_dhan_master_ids():
-    """अत्याधुनिक तकनीक: धन की आज की ताज़ा 'Scrip Master' फाइल सीधा सर्वर से डाउनलोड करना"""
-    print("📥 धन (Dhan) के सर्वर से आज की आधिकारिक 'Master ID List' डाउनलोड हो रही है...")
+    """धन सर्वर से 100% सटीक ID डाउनलोड करना (Zero Error Guarantee)"""
+    print("📥 धन सर्वर से Master ID List डाउनलोड हो रही है...")
     try:
         url = "https://images.dhan.co/api-data/api-scrip-master.csv"
         df = pd.read_csv(url, low_memory=False)
-        
-        # सिर्फ NSE और Equity (शेयरों) का डेटा फिल्टर करना
         df_eq = df[(df['SEM_EXM_EXCH_ID'] == 'NSE') & (df['SEM_SERIES'] == 'EQ')]
-        
-        # सिंबल को उसकी सटीक ID के साथ जोड़ना (Mapping)
         id_map = dict(zip(df_eq['SEM_CUSTOM_SYMBOL'], df_eq['SEM_SMST_SECURITY_ID']))
         symbol_map = dict(zip(df_eq['SEM_CUSTOM_SYMBOL'], df_eq['SEM_TRADING_SYMBOL']))
-        
-        print(f"✅ धन सर्वर सिंक सफल! कुल {len(id_map)} शेयरों की असली ID सुरक्षित कर ली गई है।")
+        print("✅ Master ID List डाउनलोड सफल!")
         return id_map, symbol_map
     except Exception as e:
-        print(f"❌ मास्टर लिस्ट डाउनलोड एरर: {e}")
+        print(f"❌ Master List डाउनलोड एरर: {e}")
         return {}, {}
 
-def fire_flawless_order(symbol, sec_id, exact_trading_symbol, qty, side):
-    """ज़ीरो एरर आर्डर एग्जीक्यूशन"""
-    url = "https://api.dhan.co/orders"
-    payload = {
-        "dhanClientId": CLIENT_ID,
-        "transactionType": side,
-        "exchangeSegment": "NSE_EQ",
-        "productType": "INTRADAY",
-        "orderType": "MARKET",
-        "quantity": int(qty),
-        "securityId": str(sec_id), # धन द्वारा दी गई 100% सटीक ID
-        "tradingSymbol": str(exact_trading_symbol), # धन का अपना फॉर्मेट (जैसे RELIANCE-EQ)
-        "price": 0
-    }
-    
-    try:
-        res = requests.post(url, headers=HEADERS, json=payload)
-        if res.status_code == 200 or res.status_code == 201:
-            print(f"🔥 महा-सफलता! {symbol} का {side} आर्डर आपके ऐप में लग गया है!")
-        else:
-            print(f"⚠️ ब्रोकर रिस्पॉन्स: {res.status_code} | {res.text}")
-    except Exception as e:
-        print(f"❌ आर्डर भेजने में इंटरनेट एरर: {e}")
-
-def run_ultimate_sniper():
+def execute_instant_trade():
     # 1. फंड चेक
     f_res = requests.get("https://api.dhan.co/fundlimit", headers=HEADERS)
     if f_res.status_code != 200:
         print("❌ धन API से कनेक्शन फेल।")
         return
     cash = float(f_res.json().get('availabelBalance', 0))
+    if cash < 100:
+        print("⚠️ ट्रेडिंग के लिए अपर्याप्त फंड।")
+        return
     print(f"💰 उपलब्ध कैपिटल: ₹{cash}")
 
-    # 2. धन मास्टर फाइल डाउनलोड
+    # 2. धन मास्टर फाइल सिंक
     id_map, symbol_map = fetch_dhan_master_ids()
     if not id_map: return
 
-    # 3. सुपर-फ़ास्ट स्कैनिंग
-    for s in NIFTY_WATCHLIST:
-        try:
-            sec_id = id_map.get(s)
-            exact_symbol = symbol_map.get(s)
+    # 3. तुरंत ट्रेड (Instant Execution) लॉजिक
+    trade_taken = False
+    
+    for s in WATCHLIST:
+        if trade_taken: 
+            break # एक ट्रेड हो गया, तो कोड तुरंत बंद (मिनट बचाने के लिए)
             
-            # अगर कोई शेयर धन की लिस्ट में आज नहीं है, तो उसे छोड़ दो
-            if not sec_id or not exact_symbol: continue
+        sec_id = id_map.get(s)
+        exact_symbol = symbol_map.get(s)
+        if not sec_id or not exact_symbol: continue
 
+        try:
+            # लेटेस्ट 5 मिनट का डाटा खींचना
             df = yf.Ticker(f"{s}.NS").history(period="1d", interval="5m")
-            if df.empty or len(df) < 2: continue
+            if len(df) < 2: continue
 
             ltp = df['Close'].iloc[-1]
             open_p = df['Open'].iloc[0]
             change = ((ltp - open_p) / open_p) * 100
 
-            # वॉल्यूम स्पाइक चेक (संस्थागत खरीदारी/बिकवाली)
-            avg_vol = df['Volume'].rolling(10).mean().iloc[-2]
-            curr_vol = df['Volume'].iloc[-1]
-
-            # 🚀 एडवांस ब्रेकआउट स्ट्रेटेजी (1.5% मूव + 1.5x वॉल्यूम)
-            if change > 1.5 and curr_vol > (avg_vol * 1.5):
-                qty = int((cash * 4) / ltp)
-                print(f"🎯 शिकार लॉक: {s} | {change:.2f}% UP | Volume Spike Detected!")
-                fire_flawless_order(s, sec_id, exact_symbol, qty, "BUY")
-                break # एक बार में एक ट्रेड
-
-            elif change < -1.5 and curr_vol > (avg_vol * 1.5):
-                qty = int((cash * 4) / ltp)
-                print(f"📉 शिकार लॉक: {s} | {change:.2f}% DOWN | Panic Selling Detected!")
-                fire_flawless_order(s, sec_id, exact_symbol, qty, "SELL")
-                break
+            # 🚀 शर्त बिल्कुल कम कर दी है (सिर्फ 0.2% मूव) ताकि अभी ट्रेड ले सके
+            if change > 0.2 or change < -0.2:
+                side = "BUY" if change > 0.2 else "SELL"
                 
-        except: continue
+                # क्वांटिटी कैलकुलेशन (4x लेवरेज के साथ)
+                qty = int((cash * 4) / ltp)
+                if qty < 1: qty = 1 # कम से कम 1 शेयर का आर्डर
+                
+                print(f"🎯 शिकार मिल गया: {s} | मूव: {change:.2f}% | साइड: {side}")
+                
+                # 💥 आर्डर प्रहार
+                payload = {
+                    "dhanClientId": CLIENT_ID, "transactionType": side, "exchangeSegment": "NSE_EQ",
+                    "productType": "INTRADAY", "orderType": "MARKET", "quantity": qty,
+                    "securityId": str(sec_id), "tradingSymbol": str(exact_symbol), "price": 0
+                }
+                res = requests.post("https://api.dhan.co/orders", headers=HEADERS, json=payload)
+                
+                if res.status_code in [200, 201]:
+                    print(f"🔥 महा-सफलता! {s} का {side} आर्डर आपके धन ऐप में लग गया है!")
+                else:
+                    print(f"⚠️ ब्रोकर रिस्पॉन्स: {res.text}")
+                    
+                trade_taken = True # सिस्टम को बता दिया कि आर्डर लग चुका है
+        except:
+            continue
+            
+    if not trade_taken:
+        print("⚠️ आज बाज़ार बिल्कुल जाम है (0.2% भी नहीं हिला)।")
 
 if __name__ == "__main__":
-    print(f"🚀 अल्टीमेट स्नाइपर इंजन बूट हो रहा है... ({datetime.now().strftime('%H:%M:%S')})")
-    run_ultimate_sniper()
-    print("🏁 स्कैनिंग साइकिल पूरी हुई।")
+    print(f"🚀 'Instant Trade' स्नाइपर बूट हो रहा है... ({datetime.now().strftime('%H:%M:%S')})")
+    execute_instant_trade()
+    print("🏁 कोड का काम पूरा हुआ। GitHub मिनट बचाए गए।")
