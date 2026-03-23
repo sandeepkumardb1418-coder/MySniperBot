@@ -6,13 +6,27 @@ CLIENT_ID = str(os.environ.get("DHAN_CLIENT_ID")).strip()
 ACCESS_TOKEN = str(os.environ.get("DHAN_ACCESS_TOKEN")).strip()
 HEADERS = {"access-token": ACCESS_TOKEN, "client-id": CLIENT_ID, "Content-Type": "application/json"}
 
-# 🎯 टॉप 30 हाई-वॉल्यूम वॉचलिस्ट (GitHub मिनट बचाने और फ़ास्ट एग्जीक्यूशन के लिए)
+# 🎯 टॉप 30 हाई-वॉल्यूम वॉचलिस्ट (फ़ास्ट एग्जीक्यूशन के लिए)
 WATCHLIST = [
     "RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS", "SBIN", "ITC", "BHARTIARTL", 
     "BAJFINANCE", "TATAMOTORS", "SUNPHARMA", "MARUTI", "KOTAKBANK", "AXISBANK", 
     "NTPC", "TATASTEEL", "ULTRACEMCO", "POWERGRID", "M&M", "ASIANPAINT", "HCLTECH", 
     "TITAN", "BAJAJFINSV", "WIPRO", "NESTLEIND", "ZOMATO", "ANANDRATHI", "AWL", "IRFC", "RVNL"
 ]
+
+def check_open_positions():
+    """सुरक्षा चक्र: चेक करेगा कि क्या पहले से कोई इंट्राडे ट्रेड चल रहा है"""
+    try:
+        res = requests.get("https://api.dhan.co/positions", headers=HEADERS)
+        if res.status_code == 200:
+            positions = res.json()
+            for p in positions:
+                # अगर कोई भी इंट्राडे पोजीशन ओपन है (netQty 0 नहीं है)
+                if int(float(p.get('netQty', 0))) != 0 and p.get('productType') == 'INTRADAY':
+                    return True # हाँ, ट्रेड चल रहा है
+    except Exception as e:
+        print(f"❌ पोजीशन चेक एरर: {e}")
+    return False # कोई ट्रेड नहीं चल रहा
 
 def fetch_dhan_master_ids():
     """धन सर्वर से 100% सटीक ID डाउनलोड करना"""
@@ -30,6 +44,11 @@ def fetch_dhan_master_ids():
         return {}, {}
 
 def execute_instant_trade():
+    # 🚨 सबसे पहला और ज़रूरी चेक: क्या पहले से कोई ट्रेड ओपन है?
+    if check_open_positions():
+        print("⏳ एक पोजीशन पहले से ओपन है। नया ट्रेड नहीं लिया जाएगा। Risk Manager उसे हैंडल करेगा।")
+        return # यहीं से कोड वापस लौट जाएगा
+
     # 1. फंड चेक
     f_res = requests.get("https://api.dhan.co/fundlimit", headers=HEADERS)
     if f_res.status_code != 200:
@@ -45,12 +64,12 @@ def execute_instant_trade():
     id_map, symbol_map = fetch_dhan_master_ids()
     if not id_map: return
 
-    # 3. तुरंत ट्रेड (Instant Execution) लॉजिक
+    # 3. ट्रेड (Execution) लॉजिक
     trade_taken = False
     
     for s in WATCHLIST:
         if trade_taken: 
-            break # एक ट्रेड हो गया, तो कोड तुरंत बंद (मिनट बचाने के लिए)
+            break # एक ट्रेड हो गया, तो लूप बंद
             
         sec_id = id_map.get(s)
         exact_symbol = symbol_map.get(s)
@@ -65,7 +84,7 @@ def execute_instant_trade():
             open_p = df['Open'].iloc[0]
             change = ((ltp - open_p) / open_p) * 100
 
-            # 🚀 तुरंत ट्रेड की शर्त (0.2% मूव)
+            # 🚀 ट्रेड की शर्त (0.2% मूव)
             if change > 0.2 or change < -0.2:
                 side = "BUY" if change > 0.2 else "SELL"
                 
@@ -75,14 +94,14 @@ def execute_instant_trade():
                 
                 print(f"🎯 शिकार मिल गया: {s} | मूव: {change:.2f}% | साइड: {side}")
                 
-                # 💥 आर्डर प्रहार (सुधरा हुआ पेलोड - validity DAY के साथ)
+                # 💥 आर्डर प्रहार (validity DAY के साथ)
                 payload = {
                     "dhanClientId": CLIENT_ID, 
                     "transactionType": side, 
                     "exchangeSegment": "NSE_EQ",
                     "productType": "INTRADAY", 
                     "orderType": "MARKET", 
-                    "validity": "DAY",        # 👈 यह रही वो जादुई लाइन जिसने हमारा एरर खत्म किया
+                    "validity": "DAY",
                     "quantity": qty,
                     "securityId": str(sec_id), 
                     "tradingSymbol": str(exact_symbol), 
@@ -103,6 +122,6 @@ def execute_instant_trade():
         print("⚠️ आज बाज़ार बिल्कुल जाम है (0.2% भी नहीं हिला)।")
 
 if __name__ == "__main__":
-    print(f"🚀 'Instant Trade' स्नाइपर बूट हो रहा है... ({datetime.now().strftime('%H:%M:%S')})")
+    print(f"🚀 'Advanced Sniper' बूट हो रहा है... ({datetime.now().strftime('%H:%M:%S')})")
     execute_instant_trade()
-    print("🏁 कोड का काम पूरा हुआ। GitHub मिनट बचाए गए।")
+    print("🏁 कोड का काम पूरा हुआ।")
