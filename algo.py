@@ -5,20 +5,15 @@ CLIENT_ID = str(os.environ.get("DHAN_CLIENT_ID")).strip()
 ACCESS_TOKEN = str(os.environ.get("DHAN_ACCESS_TOKEN")).strip()
 HEADERS = {"access-token": ACCESS_TOKEN, "client-id": CLIENT_ID, "Content-Type": "application/json"}
 
-# 🎯 एडवांस डेटा: शेयरों के सटीक सिक्योरिटी ID (Dhan Master Data)
-SECURITY_IDS = {
-    "ANANDRATHI": "13637", "ZOMATO": "5097", "TATASTEEL": "3499", 
-    "RELIANCE": "2885", "AWL": "18096", "DCXINDIA": "11915"
-}
-
-def place_order_advanced(symbol, qty, side):
-    """बिना किसी एरर के सीधा सटीक आर्डर"""
+def place_order_final(symbol, qty, side):
+    """बिना किसी फालतू डेटा के सीधा प्रहार"""
     url = "https://api.dhan.co/orders"
-    sec_id = SECURITY_IDS.get(symbol)
     
-    if not sec_id:
-        print(f"⚠️ {symbol} की ID नहीं मिली, स्किप कर रहा हूँ।")
-        return
+    # तकनीकी सुधार: सिर्फ Security ID का उपयोग (यही धन को सबसे ज़्यादा पसंद है)
+    ids = {"ANANDRATHI": "13637", "ZOMATO": "5097", "TATASTEEL": "3499", "AWL": "18096"}
+    sec_id = ids.get(symbol)
+    
+    if not sec_id: return
 
     payload = {
         "dhanClientId": CLIENT_ID,
@@ -27,45 +22,33 @@ def place_order_advanced(symbol, qty, side):
         "productType": "INTRADAY",
         "orderType": "MARKET",
         "quantity": int(qty),
-        "securityId": sec_id,  # 👈 अब कोई एरर नहीं आएगा
-        "tradingSymbol": f"{symbol}-EQ",
+        "securityId": sec_id,
         "price": 0
     }
     
     res = requests.post(url, headers=HEADERS, json=payload)
-    print(f"📡 {symbol} | स्टेटस: {res.status_code} | रिस्पॉन्स: {res.text}")
+    # अगर यहाँ 200 आया, तो मतलब सौदा आपके मोबाइल ऐप में दिख गया!
+    print(f"📡 {symbol} | Response: {res.status_code} | {res.text}")
 
 def execution_engine():
-    # 1. फंड चेक
+    # फंड चेक
     f_res = requests.get("https://api.dhan.co/fundlimit", headers=HEADERS)
-    if f_res.status_code != 200: return
     cash = float(f_res.json().get('availabelBalance', 0))
-    print(f"💰 उपलब्ध कैश: ₹{cash}")
+    print(f"💰 फंड: ₹{cash}")
 
-    # 2. एडवांस स्कैनिंग (Price + Volume)
-    for s, sid in SECURITY_IDS.items():
-        try:
-            stock = yf.Ticker(f"{s}.NS")
-            df = stock.history(period="1d", interval="5m")
-            if df.empty: continue
+    # सिर्फ आनंद राठी पर फोकस (क्योंकि वह गिर रहा है और हमारा शिकार है)
+    target = "ANANDRATHI"
+    df = yf.Ticker(f"{target}.NS").history(period="1d", interval="5m")
+    
+    if not df.empty:
+        ltp = df['Close'].iloc[-1]
+        change = ((ltp - df['Open'].iloc[0]) / df['Open'].iloc[0]) * 100
+        print(f"📊 {target} भाव: {ltp} | बदलाव: {change:.2f}%")
 
-            ltp = df['Close'].iloc[-1]
-            change = ((ltp - df['Open'].iloc[0]) / df['Open'].iloc[0]) * 100
-            
-            print(f"🔍 विश्लेषण: {s} | भाव: {ltp} | बदलाव: {change:.2f}%")
-
-            # प्रहार की शर्त: 1.5% का मूव मिलते ही आर्डर
-            qty = int((cash * 4) / ltp) # 4x लेवरेज के साथ
-            if change > 1.5:
-                place_order_advanced(s, qty, "BUY")
-                break
-            elif change < -1.5:
-                place_order_advanced(s, qty, "SELL")
-                break
-        except Exception as e:
-            print(f"❌ {s} में तकनीकी दिक्कत: {e}")
+        # अगर 1% से ज़्यादा गिरा है, तो सीधा SELL (शॉर्ट सेल)
+        if change < -1.0:
+            qty = int((cash * 4) / ltp)
+            place_order_final(target, qty, "SELL")
 
 if __name__ == "__main__":
-    print("🔥 एडवांस स्नाइपर इंजन सक्रिय...")
     execution_engine()
-    print("✅ आज का शिकार अभियान पूरा हुआ।")
