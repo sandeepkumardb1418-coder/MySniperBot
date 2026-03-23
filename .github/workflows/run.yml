@@ -12,16 +12,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+      
       - uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-      - run: pip install pandas yfinance requests pytz numpy
-      - name: Execute 360 AI Engine
+          
+      - name: Install Dependencies
+        run: pip install pandas yfinance requests pytz numpy
+        
+      # 1. पहले AI इंजन चलेगा (नया ट्रेड ढूँढने के लिए)
+      - name: Execute AI Engine (Buy/Sell)
         env:
           DHAN_CLIENT_ID: ${{ secrets.DHAN_CLIENT_ID }}
           DHAN_ACCESS_TOKEN: ${{ secrets.DHAN_ACCESS_TOKEN }}
         run: python algo.py
-        - name: Execute AI Engine (Buy/Sell)
-        run: python algo.py
-        name: Execute AI Risk Manager (SL/Target)
+        
+      # 2. फिर रिस्क मैनेजर चलेगा (SL या Target चेक करने के लिए)
+      - name: Execute AI Risk Manager (SL/Target)
+        env:
+          DHAN_CLIENT_ID: ${{ secrets.DHAN_CLIENT_ID }}
+          DHAN_ACCESS_TOKEN: ${{ secrets.DHAN_ACCESS_TOKEN }}
         run: python risk_manager.py
