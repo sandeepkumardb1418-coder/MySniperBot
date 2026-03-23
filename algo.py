@@ -71,6 +71,45 @@ def place_strict_orders(symbol, ltp, qty, side):
     except Exception as e:
         print(f"❌ आर्डर लगाने में त्रुटि: {e}")
 
+def exit_open_positions():
+    """3 बजे से पहले पेनल्टी से बचने के लिए सभी ओपन ट्रेड काटना"""
+    print("⏰ 2:45 PM हो चुके हैं! ब्रोकर की पेनल्टी से बचने के लिए ओपन पोजीशन काटी जा रही हैं...")
+    try:
+        res = requests.get("https://api.dhan.co/positions", headers=HEADERS)
+        if res.status_code == 200:
+            positions = res.json()
+            closed_any = False
+            for pos in positions:
+                # कितनी क्वांटिटी खरीदी और बेची गई है, उसका अंतर (Net Qty) निकालना
+                b_qty = float(pos.get('buyQty', 0))
+                s_qty = float(pos.get('sellQty', 0))
+                net_qty = b_qty - s_qty
+                
+                # अगर कोई इंट्राडे पोजीशन ओपन है
+                if net_qty != 0 and pos.get('productType') == 'INTRADAY':
+                    symbol = pos.get('tradingSymbol')
+                    sec_id = pos.get('securityId')
+                    exch = pos.get('exchangeSegment')
+                    
+                    side = "SELL" if net_qty > 0 else "BUY"
+                    qty = int(abs(net_qty))
+                    
+                    p_exit = {
+                        "dhanClientId": CLIENT_ID, "transactionType": side, "exchangeSegment": exch,
+                        "productType": "INTRADAY", "orderType": "MARKET", "quantity": qty,
+                        "securityId": sec_id, "price": 0
+                    }
+                    requests.post("https://api.dhan.co/orders", headers=HEADERS, json=p_exit)
+                    print(f"✅ ब्रोकर पेनल्टी से बचाव: {symbol} की {qty} क्वांटिटी {side} कर दी गई है!")
+                    closed_any = True
+            
+            if not closed_any:
+                print("👍 कोई ओपन पोजीशन नहीं है। सब कुछ सुरक्षित है।")
+        else:
+            print(f"❌ पोजीशन चेक करने में एरर: {res.text}")
+    except Exception as e:
+        print(f"❌ पोजीशन काटने में त्रुटि: {e}")
+
 def sniper_360_scan():
     cash = get_dhan_funds()
     if cash < 100: 
@@ -93,7 +132,7 @@ def sniper_360_scan():
             change = ((ltp - df['Open'].iloc[0]) / df['Open'].iloc[0]) * 100
             
             vol_avg = df['Volume'].rolling(20).mean().iloc[-2]
-            vol_spike = df['Volume'].iloc[-1] > (vol_avg * 1.5) # 1.5x वॉल्यूम की ढील
+            vol_spike = df['Volume'].iloc[-1] > (vol_avg * 1.5) 
             rsi = df['RSI'].iloc[-1]
 
             if change >= 2.0 and vol_spike and (60 < rsi < 75) and sentiment > -0.2:
@@ -112,8 +151,16 @@ def sniper_360_scan():
     
     print("🔍 रडार स्कैन पूरा हुआ, लेकिन 1.5x वॉल्यूम वाला कोई 'क्वालिटी शेयर' नहीं मिला।")
 
-# 👇 यही वो हिस्सा है जो डिलीट हो गया था, इसके बिना कोड काम नहीं करता!
 if __name__ == "__main__":
     print("🚀 AI स्नाइपर सिस्टम स्टार्ट हो रहा है...")
-    sniper_360_scan()
+    
+    # भारतीय समय (IST) चेक करना
+    ist_now = datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%H:%M")
+    
+    # नियम: 2:45 PM के बाद नया ट्रेड ब्लॉक और पोजीशन काटना (3:00 बजे से पहले)
+    if ist_now >= "14:45" and ist_now <= "15:30":
+        exit_open_positions()
+    else:
+        sniper_360_scan()
+        
     print("✅ AI चेक पूरा हुआ।")
