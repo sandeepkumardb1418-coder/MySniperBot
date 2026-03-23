@@ -15,7 +15,7 @@ WATCHLIST = [
 ]
 
 def fetch_dhan_master_ids():
-    """धन सर्वर से 100% सटीक ID डाउनलोड करना (Zero Error Guarantee)"""
+    """धन सर्वर से 100% सटीक ID डाउनलोड करना"""
     print("📥 धन सर्वर से Master ID List डाउनलोड हो रही है...")
     try:
         url = "https://images.dhan.co/api-data/api-scrip-master.csv"
@@ -57,7 +57,7 @@ def execute_instant_trade():
         if not sec_id or not exact_symbol: continue
 
         try:
-            # लेटेस्ट 5 मिनट का डाटा खींचना
+            # लेटेस्ट 5 मिनट का डाटा
             df = yf.Ticker(f"{s}.NS").history(period="1d", interval="5m")
             if len(df) < 2: continue
 
@@ -65,30 +65,37 @@ def execute_instant_trade():
             open_p = df['Open'].iloc[0]
             change = ((ltp - open_p) / open_p) * 100
 
-            # 🚀 शर्त बिल्कुल कम कर दी है (सिर्फ 0.2% मूव) ताकि अभी ट्रेड ले सके
+            # 🚀 तुरंत ट्रेड की शर्त (0.2% मूव)
             if change > 0.2 or change < -0.2:
                 side = "BUY" if change > 0.2 else "SELL"
                 
-                # क्वांटिटी कैलकुलेशन (4x लेवरेज के साथ)
+                # क्वांटिटी कैलकुलेशन (4x लेवरेज)
                 qty = int((cash * 4) / ltp)
-                if qty < 1: qty = 1 # कम से कम 1 शेयर का आर्डर
+                if qty < 1: qty = 1 
                 
                 print(f"🎯 शिकार मिल गया: {s} | मूव: {change:.2f}% | साइड: {side}")
                 
-                # 💥 आर्डर प्रहार
+                # 💥 आर्डर प्रहार (सुधरा हुआ पेलोड - validity DAY के साथ)
                 payload = {
-                    "dhanClientId": CLIENT_ID, "transactionType": side, "exchangeSegment": "NSE_EQ",
-                    "productType": "INTRADAY", "orderType": "MARKET", "quantity": qty,
-                    "securityId": str(sec_id), "tradingSymbol": str(exact_symbol), "price": 0
+                    "dhanClientId": CLIENT_ID, 
+                    "transactionType": side, 
+                    "exchangeSegment": "NSE_EQ",
+                    "productType": "INTRADAY", 
+                    "orderType": "MARKET", 
+                    "validity": "DAY",        # 👈 यह रही वो जादुई लाइन जिसने हमारा एरर खत्म किया
+                    "quantity": qty,
+                    "securityId": str(sec_id), 
+                    "tradingSymbol": str(exact_symbol), 
+                    "price": 0
                 }
                 res = requests.post("https://api.dhan.co/orders", headers=HEADERS, json=payload)
                 
                 if res.status_code in [200, 201]:
                     print(f"🔥 महा-सफलता! {s} का {side} आर्डर आपके धन ऐप में लग गया है!")
                 else:
-                    print(f"⚠️ ब्रोकर रिस्पॉन्स: {res.text}")
+                    print(f"⚠️ ब्रोकर रिस्पॉन्स: {res.status_code} | {res.text}")
                     
-                trade_taken = True # सिस्टम को बता दिया कि आर्डर लग चुका है
+                trade_taken = True
         except:
             continue
             
