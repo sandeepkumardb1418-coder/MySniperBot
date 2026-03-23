@@ -7,8 +7,12 @@ ACCESS_TOKEN = str(os.environ.get("DHAN_ACCESS_TOKEN")).strip()
 HEADERS = {"access-token": ACCESS_TOKEN, "client-id": CLIENT_ID, "Content-Type": "application/json"}
 
 def place_order(symbol, qty, side):
-    """सुधार: सीधा सिंबल से आर्डर, ताकि ID का झंझट खत्म हो"""
+    """फाइनल उपाय: शुद्ध सिंबल आधारित आर्डर"""
     url = "https://api.dhan.co/orders"
+    
+    # धन (Dhan) के लिए सिंबल को सही फॉर्मेट (SYMBOL-EQ) में बदलना
+    formatted_symbol = f"{symbol}-EQ" 
+    
     payload = {
         "dhanClientId": CLIENT_ID,
         "transactionType": side,
@@ -16,42 +20,50 @@ def place_order(symbol, qty, side):
         "productType": "INTRADAY",
         "orderType": "MARKET",
         "quantity": int(qty),
-        "tradingSymbol": symbol, # सीधा नाम का उपयोग
+        "tradingSymbol": formatted_symbol, 
         "price": 0
     }
-    res = requests.post(url, headers=HEADERS, json=payload)
-    print(f"📡 {symbol} आर्डर स्टेटस: {res.status_code} | रिस्पॉन्स: {res.text}")
+    
+    try:
+        res = requests.post(url, headers=HEADERS, json=payload)
+        print(f"📡 {formatted_symbol} | Status: {res.status_code}")
+        print(f"📄 Server Response: {res.text}")
+    except Exception as e:
+        print(f"❌ कनेक्शन एरर: {e}")
 
 def sniper_360_logic():
-    # 1. फंड चेक
-    f_res = requests.get("https://api.dhan.co/fundlimit", headers=HEADERS)
-    cash = float(f_res.json().get('availabelBalance', 0)) if f_res.status_code == 200 else 0
-    
-    # 2. आज का मूड (Nifty)
-    nifty = yf.Ticker("^NSEI").history(period="1d", interval="15m")
-    sentiment = ((nifty['Close'].iloc[-1] - nifty['Open'].iloc[0]) / nifty['Open'].iloc[0]) * 100
-    print(f"💰 बैलेंस: ₹{cash} | 🌍 मूड: {sentiment:.2f}%")
+    # 1. फंड और मूड चेक
+    try:
+        f_res = requests.get("https://api.dhan.co/fundlimit", headers=HEADERS)
+        cash = float(f_res.json().get('availabelBalance', 0))
+        nifty = yf.Ticker("^NSEI").history(period="1d", interval="15m")
+        sentiment = ((nifty['Close'].iloc[-1] - nifty['Open'].iloc[0]) / nifty['Open'].iloc[0]) * 100
+        print(f"💰 फंड: ₹{cash} | 🌍 मूड: {sentiment:.2f}%")
+    except: return
 
-    # 3. टॉप हाई-वॉल्यूम स्टॉक्स (करेंट विश्लेषण)
-    stocks = ["ANANDRATHI", "AWL", "DCXINDIA", "NOCIL", "ZOMATO"]
+    # 2. आज के 'प्राइस एक्शन' स्टॉक्स (सिर्फ 5 सबसे मज़बूत नाम)
+    stocks = ["ANANDRATHI", "DCXINDIA", "NOCIL", "AWL", "RELIANCE"]
     
     for s in stocks:
-        df = yf.Ticker(f"{s}.NS").history(period="1d", interval="15m")
-        if len(df) < 2: continue
-        
-        ltp = df['Close'].iloc[-1]
-        change = ((ltp - df['Open'].iloc[0]) / df['Open'].iloc[0]) * 100
-        
-        # गेनर पकड़ने का नियम (जैसे DCX, NOCIL)
-        if change > 3.0 and sentiment > -0.5:
-            qty = int((cash * 4) / ltp) # 4x लेवरेज
-            place_order(s, qty, "BUY")
-            break
-        # लूजर पकड़ने का नियम
-        elif change < -3.0 and sentiment < 0.5:
-            qty = int((cash * 4) / ltp)
-            place_order(s, qty, "SELL")
-            break
+        try:
+            df = yf.Ticker(f"{s}.NS").history(period="1d", interval="15m")
+            if len(df) < 2: continue
+            
+            ltp = df['Close'].iloc[-1]
+            day_high = df['High'].iloc[:-1].max()
+            day_low = df['Low'].iloc[:-1].min()
+            
+            # 📈 रेजिस्टेंस ब्रेकआउट (BUY)
+            if ltp > day_high and sentiment > 0.1:
+                place_order(s, int((cash * 4) / ltp), "BUY")
+                break
+            # 📉 सपोर्ट ब्रेकडाउन (SELL)
+            elif ltp < day_low and sentiment < -0.1:
+                place_order(s, int((cash * 4) / ltp), "SELL")
+                break
+        except: continue
 
 if __name__ == "__main__":
+    print("🚀 स्नाइपर 2.0 (नो-आईडी मोड) स्टार्ट...")
     sniper_360_logic()
+    print("✅ प्रक्रिया पूरी हुई।")
