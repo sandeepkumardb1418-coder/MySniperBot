@@ -6,42 +6,34 @@ CLIENT_ID = str(os.environ.get("DHAN_CLIENT_ID")).strip()
 ACCESS_TOKEN = str(os.environ.get("DHAN_ACCESS_TOKEN")).strip()
 HEADERS = {"access-token": ACCESS_TOKEN, "client-id": CLIENT_ID, "Content-Type": "application/json"}
 
-def get_accurate_sec_id(symbol):
-    """तकनीकी सुधार: यह सीधा धन के सिंबल मास्टर से ID उठाएगा"""
-    try:
-        # हम यहाँ एक डिक्शनरी का उपयोग कर रहे हैं जो सबसे ज़्यादा ट्रेड होने वाले स्टॉक्स के ID रखेगी
-        # लाइव मार्केट में यह सबसे फ़ास्ट तरीका है
-        master_ids = {"ANANDRATHI": "13637", "TATASTEEL": "3499", "RELIANCE": "2885", "AWL": "18096"}
-        return master_ids.get(symbol, "11915") # अगर लिस्ट में नहीं है तो डिफॉल्ट (जोखिम भरा)
-    except: return "11915"
-
-def place_order(symbol, qty, side, ltp):
-    sec_id = get_accurate_sec_id(symbol)
+def place_order(symbol, qty, side):
+    """सुधार: सीधा सिंबल से आर्डर, ताकि ID का झंझट खत्म हो"""
+    url = "https://api.dhan.co/orders"
     payload = {
-        "dhanClientId": CLIENT_ID, "transactionType": side, "exchangeSegment": "NSE_EQ",
-        "productType": "INTRADAY", "orderType": "MARKET", "quantity": int(qty),
-        "securityId": sec_id, "price": 0
+        "dhanClientId": CLIENT_ID,
+        "transactionType": side,
+        "exchangeSegment": "NSE_EQ",
+        "productType": "INTRADAY",
+        "orderType": "MARKET",
+        "quantity": int(qty),
+        "tradingSymbol": symbol, # सीधा नाम का उपयोग
+        "price": 0
     }
-    # 🚨 असली सुधार: आर्डर रिस्पॉन्स को बारीकी से चेक करना
-    response = requests.post("https://api.dhan.co/orders", headers=HEADERS, json=payload)
-    print(f"📡 {symbol} आर्डर स्टेटस: {response.status_code} | रिस्पॉन्स: {response.text}")
+    res = requests.post(url, headers=HEADERS, json=payload)
+    print(f"📡 {symbol} आर्डर स्टेटस: {res.status_code} | रिस्पॉन्स: {res.text}")
 
 def sniper_360_logic():
-    # फंड चेक
+    # 1. फंड चेक
     f_res = requests.get("https://api.dhan.co/fundlimit", headers=HEADERS)
-    if f_res.status_code != 200:
-        print("❌ धन सर्वर से कनेक्शन टूटा।")
-        return
-    cash = float(f_res.json().get('availabelBalance', 0))
+    cash = float(f_res.json().get('availabelBalance', 0)) if f_res.status_code == 200 else 0
     
-    # मार्केट मूड (करेंट डे)
+    # 2. आज का मूड (Nifty)
     nifty = yf.Ticker("^NSEI").history(period="1d", interval="15m")
     sentiment = ((nifty['Close'].iloc[-1] - nifty['Open'].iloc[0]) / nifty['Open'].iloc[0]) * 100
-    
     print(f"💰 बैलेंस: ₹{cash} | 🌍 मूड: {sentiment:.2f}%")
 
-    # टॉप 100 शेयरों को ही स्कैन करें (स्पीड के लिए)
-    stocks = ["ANANDRATHI", "TATASTEEL", "RELIANCE", "AWL", "ZOMATO", "IRFC", "RVNL"]
+    # 3. टॉप हाई-वॉल्यूम स्टॉक्स (करेंट विश्लेषण)
+    stocks = ["ANANDRATHI", "AWL", "DCXINDIA", "NOCIL", "ZOMATO"]
     
     for s in stocks:
         df = yf.Ticker(f"{s}.NS").history(period="1d", interval="15m")
@@ -50,12 +42,15 @@ def sniper_360_logic():
         ltp = df['Close'].iloc[-1]
         change = ((ltp - df['Open'].iloc[0]) / df['Open'].iloc[0]) * 100
         
-        # सरल लेकिन मज़बूत प्राइस एक्शन
-        if change > 2.5 and sentiment > 0.2:
-            place_order(s, int((cash*5)/ltp), "BUY", ltp)
+        # गेनर पकड़ने का नियम (जैसे DCX, NOCIL)
+        if change > 3.0 and sentiment > -0.5:
+            qty = int((cash * 4) / ltp) # 4x लेवरेज
+            place_order(s, qty, "BUY")
             break
-        elif change < -2.5 and sentiment < -0.2:
-            place_order(s, int((cash*5)/ltp), "SELL", ltp)
+        # लूजर पकड़ने का नियम
+        elif change < -3.0 and sentiment < 0.5:
+            qty = int((cash * 4) / ltp)
+            place_order(s, qty, "SELL")
             break
 
 if __name__ == "__main__":
