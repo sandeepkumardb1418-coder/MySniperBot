@@ -6,122 +6,103 @@ CLIENT_ID = str(os.environ.get("DHAN_CLIENT_ID")).strip()
 ACCESS_TOKEN = str(os.environ.get("DHAN_ACCESS_TOKEN")).strip()
 HEADERS = {"access-token": ACCESS_TOKEN, "client-id": CLIENT_ID, "Content-Type": "application/json"}
 
-# 🎯 टॉप 30 हाई-वॉल्यूम वॉचलिस्ट (फ़ास्ट एग्जीक्यूशन के लिए)
+# 🎯 Nifty 500 की बड़ी लिस्ट (मशीन अब पूरा जंगल छानेगी)
 WATCHLIST = [
-    "RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS", "SBIN", "ITC", "BHARTIARTL", 
-    "BAJFINANCE", "TATAMOTORS", "SUNPHARMA", "MARUTI", "KOTAKBANK", "AXISBANK", 
-    "NTPC", "TATASTEEL", "ULTRACEMCO", "POWERGRID", "M&M", "ASIANPAINT", "HCLTECH", 
-    "TITAN", "BAJAJFINSV", "WIPRO", "NESTLEIND", "ZOMATO", "ANANDRATHI", "AWL", "IRFC", "RVNL"
+    "ABB", "ACC", "ADANIENT", "ADANIPORTS", "ADANIPOWER", "AMBUJACEM", "APOLLOHOSP", "ASIANPAINT", "AUBANK", "AXISBANK", 
+    "BAJAJ-AUTO", "BAJFINANCE", "BAJAJFINSV", "BALKRISIND", "BANDHANBNK", "BANKBARODA", "BEL", "BERGEPAINT", "BHARATFORG", 
+    "BHARTIARTL", "BHEL", "BIOCON", "BOSCHLTD", "BPCL", "BRITANNIA", "CANBK", "CHOLAFIN", "CIPLA", "COALINDIA", "COFORGE", 
+    "COLPAL", "CONCOR", "CROMPTON", "CUMMINSIND", "DABUR", "DALBHARAT", "DEEPAKNTR", "DIVISLAB", "DIXON", "DLF", "DRREDDY", 
+    "EICHERMOT", "ESCORTS", "EXIDEIND", "FEDERALBNK", "GAIL", "GLENMARK", "GODREJCP", "GODREJPROP", "GRASIM", "GUJGASLTD", 
+    "HAL", "HAVELLS", "HCLTECH", "HDFCAMC", "HDFCBANK", "HDFCLIFE", "HEROMOTOCO", "HINDALCO", "HINDCOPPER", "HINDPETRO", 
+    "HINDUNILVR", "ICICIBANK", "ICICIGI", "ICICIPRULI", "IDFCFIRSTB", "IEX", "IGL", "INDHOTEL", "INDIACEM", "INDIGO", 
+    "INDUSINDBK", "INDUSTOWER", "INFY", "IOC", "IRCTC", "IRFC", "ITC", "JINDALSTEL", "JSWSTEEL", "JUBLFOOD", "KOTAKBANK", 
+    "L&TFH", "LTIM", "LT", "LUPIN", "M&M", "M&MFIN", "MANAPPURAM", "MARICO", "MARUTI", "MFSL", "MPHASIS", "MRF", "MUTHOOTFIN", 
+    "NATIONALUM", "NAVINFLUOR", "NESTLEIND", "NMDC", "NTPC", "OBEROIRLTY", "ONGC", "PAGEIND", "PEL", "PERSISTENT", "PETRONET", 
+    "PFC", "PIDILITIND", "PIIND", "PNB", "POLYCAB", "POWERGRID", "RECLTD", "RELIANCE", "SAIL", "SBICARD", "SBILIFE", "SBIN", 
+    "SHREECEM", "SHRIRAMFIN", "SIEMENS", "SRF", "SUNPHARMA", "SUNTV", "SYNGENE", "TATACHEM", "TATACOMM", "TATACONSUM", 
+    "TATAELXSI", "TATAMOTORS", "TATAPOWER", "TATASTEEL", "TCS", "TECHM", "TITAN", "TORNTPHARM", "TRENT", "TVSMOTOR", 
+    "UBL", "ULTRACEMCO", "UPL", "VEDL", "VOLTAS", "WIPRO", "ZEEL", "ZOMATO", "ZYDUSLIFE", "AWL", "DCXINDIA", "NOCIL", "RVNL"
 ]
 
-def check_open_positions():
-    """सुरक्षा चक्र: चेक करेगा कि क्या पहले से कोई इंट्राडे ट्रेड चल रहा है"""
+def check_if_trade_already_done():
+    """सख्त नियम: ओवरट्रेडिंग और ब्रोकर की लूट बंद करने के लिए"""
     try:
         res = requests.get("https://api.dhan.co/positions", headers=HEADERS)
         if res.status_code == 200:
             positions = res.json()
             for p in positions:
-                # अगर कोई भी इंट्राडे पोजीशन ओपन है (netQty 0 नहीं है)
-                if int(float(p.get('netQty', 0))) != 0 and p.get('productType') == 'INTRADAY':
-                    return True # हाँ, ट्रेड चल रहा है
+                # अगर आज कोई भी इंट्राडे ट्रेड हुआ है (चाहे ओपन हो या क्लोज्ड), तो मशीन चुप रहेगी
+                if p.get('productType') == 'INTRADAY':
+                    return True 
     except Exception as e:
-        print(f"❌ पोजीशन चेक एरर: {e}")
-    return False # कोई ट्रेड नहीं चल रहा
+        pass
+    return False 
 
 def fetch_dhan_master_ids():
-    """धन सर्वर से 100% सटीक ID डाउनलोड करना"""
-    print("📥 धन सर्वर से Master ID List डाउनलोड हो रही है...")
+    """ID सिंक"""
+    print("📥 Master ID List डाउनलोड हो रही है...")
     try:
         url = "https://images.dhan.co/api-data/api-scrip-master.csv"
         df = pd.read_csv(url, low_memory=False)
         df_eq = df[(df['SEM_EXM_EXCH_ID'] == 'NSE') & (df['SEM_SERIES'] == 'EQ')]
         id_map = dict(zip(df_eq['SEM_CUSTOM_SYMBOL'], df_eq['SEM_SMST_SECURITY_ID']))
         symbol_map = dict(zip(df_eq['SEM_CUSTOM_SYMBOL'], df_eq['SEM_TRADING_SYMBOL']))
-        print("✅ Master ID List डाउनलोड सफल!")
         return id_map, symbol_map
-    except Exception as e:
-        print(f"❌ Master List डाउनलोड एरर: {e}")
+    except:
         return {}, {}
 
-def execute_instant_trade():
-    # 🚨 सबसे पहला और ज़रूरी चेक: क्या पहले से कोई ट्रेड ओपन है?
-    if check_open_positions():
-        print("⏳ एक पोजीशन पहले से ओपन है। नया ट्रेड नहीं लिया जाएगा। Risk Manager उसे हैंडल करेगा।")
-        return # यहीं से कोड वापस लौट जाएगा
+def run_pro_sniper():
+    # 🚨 सबसे पहला चेक: क्या आज कोई ट्रेड हो चुका है?
+    if check_if_trade_already_done():
+        print("🛑 आज का ट्रेड कोटा पूरा हो चुका है। ब्रोकरेज बचाने के लिए नया ट्रेड नहीं लिया जाएगा।")
+        return 
 
     # 1. फंड चेक
     f_res = requests.get("https://api.dhan.co/fundlimit", headers=HEADERS)
-    if f_res.status_code != 200:
-        print("❌ धन API से कनेक्शन फेल।")
-        return
+    if f_res.status_code != 200: return
     cash = float(f_res.json().get('availabelBalance', 0))
-    if cash < 100:
-        print("⚠️ ट्रेडिंग के लिए अपर्याप्त फंड।")
-        return
-    print(f"💰 उपलब्ध कैपिटल: ₹{cash}")
+    if cash < 100: return
 
     # 2. धन मास्टर फाइल सिंक
     id_map, symbol_map = fetch_dhan_master_ids()
     if not id_map: return
 
-    # 3. ट्रेड (Execution) लॉजिक
-    trade_taken = False
-    
+    # 3. 500 स्टॉक स्कैनिंग और सॉलिड ट्रेड
     for s in WATCHLIST:
-        if trade_taken: 
-            break # एक ट्रेड हो गया, तो लूप बंद
-            
         sec_id = id_map.get(s)
         exact_symbol = symbol_map.get(s)
         if not sec_id or not exact_symbol: continue
 
         try:
-            # लेटेस्ट 5 मिनट का डाटा
-            df = yf.Ticker(f"{s}.NS").history(period="1d", interval="5m")
+            df = yf.Ticker(f"{s}.NS").history(period="1d", interval="15m")
             if len(df) < 2: continue
 
             ltp = df['Close'].iloc[-1]
             open_p = df['Open'].iloc[0]
             change = ((ltp - open_p) / open_p) * 100
 
-            # 🚀 ट्रेड की शर्त (0.2% मूव)
-            if change > 0.2 or change < -0.2:
-                side = "BUY" if change > 0.2 else "SELL"
-                
-                # क्वांटिटी कैलकुलेशन (4x लेवरेज)
+            # 🚀 असली शर्त: 1.5% का मज़बूत मूव (बच्चों वाला 0.2% नहीं)
+            if change > 1.5 or change < -1.5:
+                side = "BUY" if change > 1.5 else "SELL"
                 qty = int((cash * 4) / ltp)
                 if qty < 1: qty = 1 
                 
-                print(f"🎯 शिकार मिल गया: {s} | मूव: {change:.2f}% | साइड: {side}")
+                print(f"🎯 सॉलिड शिकार: {s} | मूव: {change:.2f}% | साइड: {side}")
                 
-                # 💥 आर्डर प्रहार (validity DAY के साथ)
                 payload = {
-                    "dhanClientId": CLIENT_ID, 
-                    "transactionType": side, 
-                    "exchangeSegment": "NSE_EQ",
-                    "productType": "INTRADAY", 
-                    "orderType": "MARKET", 
-                    "validity": "DAY",
-                    "quantity": qty,
-                    "securityId": str(sec_id), 
-                    "tradingSymbol": str(exact_symbol), 
-                    "price": 0
+                    "dhanClientId": CLIENT_ID, "transactionType": side, "exchangeSegment": "NSE_EQ",
+                    "productType": "INTRADAY", "orderType": "MARKET", "validity": "DAY",
+                    "quantity": qty, "securityId": str(sec_id), "tradingSymbol": str(exact_symbol), "price": 0
                 }
                 res = requests.post("https://api.dhan.co/orders", headers=HEADERS, json=payload)
                 
                 if res.status_code in [200, 201]:
-                    print(f"🔥 महा-सफलता! {s} का {side} आर्डर आपके धन ऐप में लग गया है!")
-                else:
-                    print(f"⚠️ ब्रोकर रिस्पॉन्स: {res.status_code} | {res.text}")
-                    
-                trade_taken = True
+                    print(f"🔥 {s} में 1 सिंगल ट्रेड लग गया है। मशीन अब बंद हो रही है।")
+                    break # एक ट्रेड होते ही लूप ब्रेक!
         except:
             continue
-            
-    if not trade_taken:
-        print("⚠️ आज बाज़ार बिल्कुल जाम है (0.2% भी नहीं हिला)।")
 
 if __name__ == "__main__":
-    print(f"🚀 'Advanced Sniper' बूट हो रहा है... ({datetime.now().strftime('%H:%M:%S')})")
-    execute_instant_trade()
-    print("🏁 कोड का काम पूरा हुआ।")
+    print(f"🚀 Nifty 500 प्रो स्नाइपर बूट... ({datetime.now().strftime('%H:%M:%S')})")
+    run_pro_sniper()
+    print("🏁 स्कैनिंग पूरी।")
