@@ -1,5 +1,4 @@
-import os, requests, pytz, pandas as pd, yfinance as yf
-from datetime import datetime
+import os, requests, yfinance as yf
 
 # --- क्रेडेंशियल्स ---
 CLIENT_ID = str(os.environ.get("DHAN_CLIENT_ID")).strip()
@@ -7,63 +6,41 @@ ACCESS_TOKEN = str(os.environ.get("DHAN_ACCESS_TOKEN")).strip()
 HEADERS = {"access-token": ACCESS_TOKEN, "client-id": CLIENT_ID, "Content-Type": "application/json"}
 
 def place_order(symbol, qty, side):
-    """फाइनल उपाय: शुद्ध सिंबल आधारित आर्डर"""
+    """सिर्फ नाम के आधार पर सीधा आर्डर"""
     url = "https://api.dhan.co/orders"
-    
-    # धन (Dhan) के लिए सिंबल को सही फॉर्मेट (SYMBOL-EQ) में बदलना
-    formatted_symbol = f"{symbol}-EQ" 
-    
     payload = {
-        "dhanClientId": CLIENT_ID,
-        "transactionType": side,
-        "exchangeSegment": "NSE_EQ",
-        "productType": "INTRADAY",
-        "orderType": "MARKET",
-        "quantity": int(qty),
-        "tradingSymbol": formatted_symbol, 
-        "price": 0
+        "dhanClientId": CLIENT_ID, "transactionType": side, "exchangeSegment": "NSE_EQ",
+        "productType": "INTRADAY", "orderType": "MARKET", "quantity": int(qty),
+        "tradingSymbol": f"{symbol}-EQ", "price": 0
     }
-    
-    try:
-        res = requests.post(url, headers=HEADERS, json=payload)
-        print(f"📡 {formatted_symbol} | Status: {res.status_code}")
-        print(f"📄 Server Response: {res.text}")
-    except Exception as e:
-        print(f"❌ कनेक्शन एरर: {e}")
+    res = requests.post(url, headers=HEADERS, json=payload)
+    print(f"🚀 {symbol} | आर्डर भेजा गया | स्टेटस: {res.status_code} | रिस्पॉन्स: {res.text}")
 
-def sniper_360_logic():
-    # 1. फंड और मूड चेक
-    try:
-        f_res = requests.get("https://api.dhan.co/fundlimit", headers=HEADERS)
-        cash = float(f_res.json().get('availabelBalance', 0))
-        nifty = yf.Ticker("^NSEI").history(period="1d", interval="15m")
-        sentiment = ((nifty['Close'].iloc[-1] - nifty['Open'].iloc[0]) / nifty['Open'].iloc[0]) * 100
-        print(f"💰 फंड: ₹{cash} | 🌍 मूड: {sentiment:.2f}%")
-    except: return
+def forced_trade_logic():
+    # फंड चेक
+    f_res = requests.get("https://api.dhan.co/fundlimit", headers=HEADERS)
+    cash = float(f_res.json().get('availabelBalance', 0))
+    print(f"💰 उपलब्ध फंड: ₹{cash}")
 
-    # 2. आज के 'प्राइस एक्शन' स्टॉक्स (सिर्फ 5 सबसे मज़बूत नाम)
-    stocks = ["ANANDRATHI", "DCXINDIA", "NOCIL", "AWL", "RELIANCE"]
+    # इन 5 शेयरों में से जो भी आज थोड़ा भी मूव कर रहा है, उसे पकड़ो
+    stocks = ["ANANDRATHI", "ZOMATO", "TATASTEEL", "RELIANCE", "AWL"]
     
     for s in stocks:
-        try:
-            df = yf.Ticker(f"{s}.NS").history(period="1d", interval="15m")
-            if len(df) < 2: continue
-            
-            ltp = df['Close'].iloc[-1]
-            day_high = df['High'].iloc[:-1].max()
-            day_low = df['Low'].iloc[:-1].min()
-            
-            # 📈 रेजिस्टेंस ब्रेकआउट (BUY)
-            if ltp > day_high and sentiment > 0.1:
-                place_order(s, int((cash * 4) / ltp), "BUY")
-                break
-            # 📉 सपोर्ट ब्रेकडाउन (SELL)
-            elif ltp < day_low and sentiment < -0.1:
-                place_order(s, int((cash * 4) / ltp), "SELL")
-                break
-        except: continue
+        df = yf.Ticker(f"{s}.NS").history(period="1d", interval="5m")
+        if len(df) < 2: continue
+        
+        ltp = df['Close'].iloc[-1]
+        change = ((ltp - df['Open'].iloc[0]) / df['Open'].iloc[0]) * 100
+        
+        print(f"👀 चेकिंग: {s} | चेंज: {change:.2f}%")
+
+        # एकदम आसान शर्त: अगर 0.5% भी ऊपर या नीचे है, तो घुस जाओ!
+        if change > 0.5:
+            place_order(s, int((cash * 4) / ltp), "BUY")
+            return
+        elif change < -0.5:
+            place_order(s, int((cash * 4) / ltp), "SELL")
+            return
 
 if __name__ == "__main__":
-    print("🚀 स्नाइपर 2.0 (नो-आईडी मोड) स्टार्ट...")
-    sniper_360_logic()
-    print("✅ प्रक्रिया पूरी हुई।")
+    forced_trade_logic()
