@@ -23,6 +23,5 @@ jobs:
         run: python algo.py
         - name: Execute AI Engine (Buy/Sell)
         run: python algo.py
-        
-      - name: Execute AI Risk Manager (SL/Target)
+        name: Execute AI Risk Manager (SL/Target)
         run: python risk_manager.py
