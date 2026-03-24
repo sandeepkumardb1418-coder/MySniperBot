@@ -1,12 +1,11 @@
 import os, requests, pandas as pd, yfinance as yf
 from datetime import datetime
 
-# --- क्रेडेंशियल्स ---
 CLIENT_ID = str(os.environ.get("DHAN_CLIENT_ID")).strip()
 ACCESS_TOKEN = str(os.environ.get("DHAN_ACCESS_TOKEN")).strip()
 HEADERS = {"access-token": ACCESS_TOKEN, "client-id": CLIENT_ID, "Content-Type": "application/json"}
 
-# 🎯 Nifty 500 की मास्टर वॉचलिस्ट (बेहतरीन अवसरों के लिए)
+# Nifty 500 के टॉप स्टॉक्स 
 WATCHLIST = [
     "ABB", "ACC", "ADANIENT", "ADANIPORTS", "ADANIPOWER", "AMBUJACEM", "APOLLOHOSP", "ASIANPAINT", "AUBANK", "AXISBANK", 
     "BAJAJ-AUTO", "BAJFINANCE", "BAJAJFINSV", "BALKRISIND", "BANDHANBNK", "BANKBARODA", "BEL", "BERGEPAINT", "BHARATFORG", 
@@ -16,54 +15,46 @@ WATCHLIST = [
     "HAL", "HAVELLS", "HCLTECH", "HDFCAMC", "HDFCBANK", "HDFCLIFE", "HEROMOTOCO", "HINDALCO", "HINDCOPPER", "HINDPETRO", 
     "HINDUNILVR", "ICICIBANK", "ICICIGI", "ICICIPRULI", "IDFCFIRSTB", "IEX", "IGL", "INDHOTEL", "INDIACEM", "INDIGO", 
     "INDUSINDBK", "INDUSTOWER", "INFY", "IOC", "IRCTC", "IRFC", "ITC", "JINDALSTEL", "JSWSTEEL", "JUBLFOOD", "KOTAKBANK", 
-    "L&TFH", "LTIM", "LT", "LUPIN", "M&M", "M&MFIN", "MANAPPURAM", "MARICO", "MARUTI", "MFSL", "MPHASIS", "MRF", "MUTHOOTFIN", 
-    "NATIONALUM", "NAVINFLUOR", "NESTLEIND", "NMDC", "NTPC", "OBEROIRLTY", "ONGC", "PAGEIND", "PEL", "PERSISTENT", "PETRONET", 
-    "PFC", "PIDILITIND", "PIIND", "PNB", "POLYCAB", "POWERGRID", "RECLTD", "RELIANCE", "SAIL", "SBICARD", "SBILIFE", "SBIN", 
-    "SHREECEM", "SHRIRAMFIN", "SIEMENS", "SRF", "SUNPHARMA", "SUNTV", "SYNGENE", "TATACHEM", "TATACOMM", "TATACONSUM", 
-    "TATAELXSI", "TATAMOTORS", "TATAPOWER", "TATASTEEL", "TCS", "TECHM", "TITAN", "TORNTPHARM", "TRENT", "TVSMOTOR", 
-    "UBL", "ULTRACEMCO", "UPL", "VEDL", "VOLTAS", "WIPRO", "ZEEL", "ZOMATO", "ZYDUSLIFE", "AWL", "DCXINDIA", "NOCIL", "RVNL"
+    "LTIM", "LT", "LUPIN", "M&M", "MARICO", "MARUTI", "MPHASIS", "MRF", "MUTHOOTFIN", "NATIONALUM", "NESTLEIND", "NMDC", 
+    "NTPC", "OBEROIRLTY", "ONGC", "PEL", "PFC", "PIDILITIND", "PNB", "POWERGRID", "RECLTD", "RELIANCE", "SAIL", "SBIN", 
+    "SIEMENS", "SRF", "SUNPHARMA", "TATACHEM", "TATACOMM", "TATACONSUM", "TATAMOTORS", "TATAPOWER", "TATASTEEL", "TCS", 
+    "TECHM", "TITAN", "TRENT", "TVSMOTOR", "ULTRACEMCO", "UPL", "VEDL", "VOLTAS", "WIPRO", "ZOMATO", "AWL", "RVNL"
 ]
 
-def get_trade_status():
-    """सख्त नियम: ओपन ट्रेड और टोटल 2 ट्रेड की लिमिट चेक करना"""
+def get_dhan_positions():
+    """धन API से आज की सारी पोजीशन मंगाना (ब्रोकर की लूट रोकने के लिए)"""
     try:
         res = requests.get("https://api.dhan.co/positions", headers=HEADERS)
-        if res.status_code != 200: return -1, -1
-        
-        positions = res.json()
-        intraday_positions = [p for p in positions if p.get('productType') == 'INTRADAY']
-        
-        # कितने ट्रेड अभी चल रहे हैं?
-        open_trades = sum(1 for p in intraday_positions if int(float(p.get('netQty', 0))) != 0)
-        # आज कुल कितने ट्रेड लिए जा चुके हैं? (भले ही कट गए हों)
-        total_trades_today = len(intraday_positions)
-        
-        return open_trades, total_trades_today
-    except Exception as e:
-        print(f"❌ स्टेटस चेक एरर: {e}")
-        return -1, -1
-
-def fetch_dhan_master_ids():
-    """धन सर्वर से सटीक ID डाउनलोड"""
-    try:
-        url = "https://images.dhan.co/api-data/api-scrip-master.csv"
-        df = pd.read_csv(url, low_memory=False)
-        df_eq = df[(df['SEM_EXM_EXCH_ID'] == 'NSE') & (df['SEM_SERIES'] == 'EQ')]
-        return dict(zip(df_eq['SEM_CUSTOM_SYMBOL'], df_eq['SEM_SMST_SECURITY_ID'])), dict(zip(df_eq['SEM_CUSTOM_SYMBOL'], df_eq['SEM_TRADING_SYMBOL']))
+        if res.status_code == 200:
+            return res.json()
     except:
-        return {}, {}
+        pass
+    return []
 
-def run_pro_sniper():
-    open_trades, total_trades = get_trade_status()
+def execute_sniper():
+    positions = get_dhan_positions()
     
-    # 🚨 रूल 1: अगर कोई ट्रेड ओपन है, तो नया मत लो (Risk Manager को काम करने दो)
+    open_trades = 0
+    traded_symbols_today = set()
+
+    for p in positions:
+        if p.get('productType') == 'INTRADAY':
+            # सिंबल का नाम निकाल रहे हैं (जैसे ABB-EQ से सिर्फ ABB)
+            sym = str(p.get('tradingSymbol', '')).split('-')[0]
+            traded_symbols_today.add(sym)
+            
+            # अगर क्वांटिटी 0 नहीं है, मतलब ट्रेड अभी चल रहा है
+            if abs(int(float(p.get('netQty', 0)))) > 0:
+                open_trades += 1
+
+    # 🚨 ब्रह्मास्त्र नियम 1: अगर 1 भी ट्रेड ओपन है, तो मशीन तुरंत बंद!
     if open_trades > 0:
-        print("⏳ एक पोजीशन पहले से ओपन है। नया ट्रेड नहीं लिया जाएगा।")
+        print("⏳ एक पोजीशन पहले से चालू है। गिटहब मिनट बचाने के लिए मशीन बंद हो रही है।")
         return
-        
-    # 🚨 रूल 2: अगर दिन के 2 ट्रेड पूरे हो गए, तो मशीन बंद
-    if total_trades >= 2:
-        print("🛑 आज के अधिकतम 2 बेहतरीन ट्रेड पूरे हो चुके हैं। मशीन अब कल तक के लिए लॉक है।")
+
+    # 🚨 ब्रह्मास्त्र नियम 2: दिन के 2 ट्रेड पूरे हो गए, तो मशीन बंद!
+    if len(traded_symbols_today) >= 2:
+        print(f"🛑 आज के 2 बेहतरीन ट्रेड पूरे हो चुके हैं ({traded_symbols_today})। सिस्टम आज के लिए बंद।")
         return
 
     # फंड चेक
@@ -72,17 +63,28 @@ def run_pro_sniper():
     cash = float(f_res.json().get('availabelBalance', 0))
     if cash < 100: return
 
-    # मास्टर फाइल सिंक
-    id_map, symbol_map = fetch_dhan_master_ids()
-    if not id_map: return
+    # धन मास्टर ID सिंक
+    try:
+        url = "https://images.dhan.co/api-data/api-scrip-master.csv"
+        df = pd.read_csv(url, low_memory=False)
+        df_eq = df[(df['SEM_EXM_EXCH_ID'] == 'NSE') & (df['SEM_SERIES'] == 'EQ')]
+        id_map = dict(zip(df_eq['SEM_CUSTOM_SYMBOL'], df_eq['SEM_SMST_SECURITY_ID']))
+        symbol_map = dict(zip(df_eq['SEM_CUSTOM_SYMBOL'], df_eq['SEM_TRADING_SYMBOL']))
+    except:
+        return
 
-    # स्कैनिंग (केवल बेहतरीन अवसर)
+    # शिकार खोजना शुरू
     for s in WATCHLIST:
+        # 🚨 ब्रह्मास्त्र नियम 3: अगर इस शेयर में आज एक बार भी ट्रेड हो चुका है, तो इसे छोड़ दो!
+        if s in traded_symbols_today:
+            continue
+
         sec_id = id_map.get(s)
         exact_symbol = symbol_map.get(s)
         if not sec_id or not exact_symbol: continue
 
         try:
+            # पिछले 15 मिनट का डेटा
             df = yf.Ticker(f"{s}.NS").history(period="1d", interval="15m")
             if len(df) < 2: continue
 
@@ -90,7 +92,7 @@ def run_pro_sniper():
             open_p = df['Open'].iloc[0]
             change = ((ltp - open_p) / open_p) * 100
 
-            # 🚀 असली बेहतरीन अवसर: 1.5% का मज़बूत मूव
+            # 🚀 सॉलिड अवसर (1.5% का ट्रेंड)
             if change > 1.5 or change < -1.5:
                 side = "BUY" if change > 1.5 else "SELL"
                 qty = int((cash * 4) / ltp)
@@ -104,13 +106,10 @@ def run_pro_sniper():
                     "quantity": qty, "securityId": str(sec_id), "tradingSymbol": str(exact_symbol), "price": 0
                 }
                 res = requests.post("https://api.dhan.co/orders", headers=HEADERS, json=payload)
-                
                 if res.status_code in [200, 201]:
-                    print(f"🔥 {s} में ट्रेड लग गया है। मशीन अब एग्जिट का इंतज़ार करेगी।")
-                    break # एक बार में एक ही ट्रेड
-        except:
-            continue
+                    print(f"🔥 {s} में 1 फ्रेश ट्रेड लग गया! लूप ब्रेक किया जा रहा है।")
+                    break # एक ट्रेड लगते ही सर्च हमेशा के लिए बंद!
+        except: continue
 
 if __name__ == "__main__":
-    print(f"🚀 Nifty 500 प्रो स्नाइपर बूट... ({datetime.now().strftime('%H:%M:%S')})")
-    run_pro_sniper()
+    execute_sniper()
