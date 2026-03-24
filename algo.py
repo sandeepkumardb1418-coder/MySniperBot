@@ -17,14 +17,14 @@ WATCHLIST = [
 MEMORY_FILE = "memory.json"
 
 def send_telegram(text):
-    """एक्स-रे मोड: अब यह गिटहब को बताएगा कि क्या गड़बड़ है"""
+    """एक्स-रे मोड: गिटहब को बताएगा कि क्या गड़बड़ है"""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
     
     print(f"👉 टेलीग्राम को मैसेज भेजा जा रहा है...")
     try: 
         res = requests.post(url, json=payload)
-        print(f"👉 टेलीग्राम का जवाब: {res.text}") # यह लाइन असली बीमारी बताएगी
+        print(f"👉 टेलीग्राम का जवाब: {res.text}") 
     except Exception as e: 
         print(f"❌ इंटरनेट/सिस्टम एरर: {e}")
 
@@ -48,7 +48,12 @@ def load_memory():
         try:
             with open(MEMORY_FILE, 'r') as f:
                 mem = json.load(f)
-                if mem.get("date") == today: return mem
+                if mem.get("date") == today:
+                    # 🚨 Self-Healing: अगर पुरानी डायरी है तो क्रैश मत हो, नया जोड़ दो
+                    if "reports" not in mem: mem["reports"] = {"pre_open": False, "market_open": False, "eod": False}
+                    if "hourly" not in mem: mem["hourly"] = []
+                    if "trades_taken" not in mem: mem["trades_taken"] = []
+                    return mem
         except: pass
     return default_mem
 
