@@ -1,225 +1,174 @@
 import os, requests, json, time, pandas as pd, yfinance as yf
 from datetime import datetime
-import pytz # इंडियन टाइम के लिए
+import pytz 
 
-# --- क्रेडेंशियल्स ---
 CLIENT_ID = str(os.environ.get("DHAN_CLIENT_ID")).strip()
 DEFAULT_ACCESS_TOKEN = str(os.environ.get("DHAN_ACCESS_TOKEN")).strip()
 TELEGRAM_BOT_TOKEN = str(os.environ.get("TELEGRAM_BOT_TOKEN")).strip()
 TELEGRAM_CHAT_ID = str(os.environ.get("TELEGRAM_CHAT_ID")).strip()
 
-# इंडियन टाइमज़ोन सेटअप
-IST = pytz.timezone('Asia/Kolkata')
-
-# Nifty 500 के टॉप 150 हाई-वॉल्यूम स्टॉक्स (गिटहब टाइमआउट बचाने के लिए 150 बेस्ट हैं)
 WATCHLIST = [
-    "ABB", "ACC", "ADANIENT", "ADANIPORTS", "ADANIPOWER", "AMBUJACEM", "APOLLOHOSP", "ASIANPAINT", "AUBANK", "AXISBANK", 
-    "BAJAJ-AUTO", "BAJFINANCE", "BAJAJFINSV", "BALKRISIND", "BANDHANBNK", "BANKBARODA", "BEL", "BERGEPAINT", "BHARATFORG", 
-    "BHARTIARTL", "BHEL", "BIOCON", "BOSCHLTD", "BPCL", "BRITANNIA", "CANBK", "CHOLAFIN", "CIPLA", "COALINDIA", "COFORGE", 
-    "COLPAL", "CONCOR", "CROMPTON", "CUMMINSIND", "DABUR", "DALBHARAT", "DEEPAKNTR", "DIVISLAB", "DIXON", "DLF", "DRREDDY", 
-    "EICHERMOT", "ESCORTS", "EXIDEIND", "FEDERALBNK", "GAIL", "GLENMARK", "GODREJCP", "GODREJPROP", "GRASIM", "GUJGASLTD", 
-    "HAL", "HAVELLS", "HCLTECH", "HDFCAMC", "HDFCBANK", "HDFCLIFE", "HEROMOTOCO", "HINDALCO", "HINDCOPPER", "HINDPETRO", 
-    "HINDUNILVR", "ICICIBANK", "ICICIGI", "ICICIPRULI", "IDFCFIRSTB", "IEX", "IGL", "INDHOTEL", "INDIACEM", "INDIGO", 
-    "INDUSINDBK", "INDUSTOWER", "INFY", "IOC", "IRCTC", "IRFC", "ITC", "JINDALSTEL", "JSWSTEEL", "JUBLFOOD", "KOTAKBANK", 
-    "LTIM", "LT", "LUPIN", "M&M", "MARICO", "MARUTI", "MPHASIS", "MRF", "MUTHOOTFIN", "NATIONALUM", "NESTLEIND", "NMDC", 
-    "NTPC", "OBEROIRLTY", "ONGC", "PEL", "PFC", "PIDILITIND", "PNB", "POWERGRID", "RECLTD", "RELIANCE", "SAIL", "SBIN", 
-    "SIEMENS", "SRF", "SUNPHARMA", "TATACHEM", "TATACOMM", "TATACONSUM", "TATAMOTORS", "TATAPOWER", "TATASTEEL", "TCS", 
-    "TECHM", "TITAN", "TRENT", "TVSMOTOR", "ULTRACEMCO", "UPL", "VEDL", "VOLTAS", "WIPRO", "ZOMATO", "AWL", "RVNL"
+    "ABB", "ACC", "ADANIENT", "ADANIPORTS", "APOLLOHOSP", "ASIANPAINT", "AXISBANK", "BAJFINANCE", 
+    "BHARTIARTL", "BHEL", "COALINDIA", "DLF", "EICHERMOT", "HAL", "HDFCBANK", "ICICIBANK", 
+    "INFY", "ITC", "JSWSTEEL", "LT", "M&M", "MARUTI", "NTPC", "RELIANCE", "SBIN", "SUNPHARMA", 
+    "TATASTEEL", "TCS", "TITAN", "ZOMATO", "RVNL", "IRFC", "AWL", "PNB", "POWERGRID", "VEDL"
 ]
 
 MEMORY_FILE = "memory.json"
 
-# --- 📱 टेलीग्राम संचार ---
-def send_telegram_message(text):
+def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
     try: requests.post(url, json=payload)
     except: pass
 
-def get_dhan_token_from_telegram():
-    """टेलीग्राम चैट से टोकन ढूँढना"""
+def get_latest_token():
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
     try:
         res = requests.get(url).json()
         if res.get("ok"):
-            messages = res["result"]
-            for msg in reversed(messages):
+            for msg in reversed(res["result"]):
                 text = msg.get("message", {}).get("text", "")
                 if text.startswith("TOKEN:"):
                     return text.replace("TOKEN:", "").strip()
-    except Exception as e:
-        send_telegram_message(f"⚠️ टोकन सर्वर कनेक्ट एरर: {e}")
+    except: pass
     return DEFAULT_ACCESS_TOKEN
 
-# --- 🧠 मेमोरी मैनेजमेंट ---
 def load_memory():
-    today = datetime.now(IST).strftime('%Y-%m-%d')
+    ist = pytz.timezone('Asia/Kolkata')
+    today = datetime.now(ist).strftime('%Y-%m-%d')
+    default_mem = {"date": today, "trades_taken": [], "reports": {"pre_open": False, "market_open": False, "eod": False}, "hourly": []}
     if os.path.exists(MEMORY_FILE):
         try:
             with open(MEMORY_FILE, 'r') as f:
-                memory = json.load(f)
-                if memory.get("date") == today:
-                    return memory
+                mem = json.load(f)
+                if mem.get("date") == today: return mem
         except: pass
-    
-    return {
-        "date": today, "pre_market_sent": False, "eod_sent": False, 
-        "hourly_sent": [], "traded_symbols": [], "open_trades_high_pnl": {} 
-    }
+    return default_mem
 
-def save_memory(memory):
+def save_memory(mem):
     with open(MEMORY_FILE, 'w') as f:
-        json.dump(memory, f)
+        json.dump(mem, f)
 
-# --- 🛠 धन API टूल्स ---
-def fetch_dhan_master_ids():
-    try:
-        url = "https://images.dhan.co/api-data/api-scrip-master.csv"
-        df = pd.read_csv(url, low_memory=False)
-        df_eq = df[(df['SEM_EXM_EXCH_ID'] == 'NSE') & (df['SEM_SERIES'] == 'EQ')]
-        id_map = dict(zip(df_eq['SEM_CUSTOM_SYMBOL'], df_eq['SEM_SMST_SECURITY_ID']))
-        symbol_map = dict(zip(df_eq['SEM_CUSTOM_SYMBOL'], df_eq['SEM_TRADING_SYMBOL']))
-        return id_map, symbol_map
-    except: return {}, {}
-
-def execute_exit_order(symbol, sec_id, qty, side, reason, headers):
-    payload = {
-        "dhanClientId": CLIENT_ID, "transactionType": side, "exchangeSegment": "NSE_EQ",
-        "productType": "INTRADAY", "orderType": "MARKET", "validity": "DAY",
-        "quantity": int(qty), "securityId": str(sec_id), "tradingSymbol": symbol, "price": 0
-    }
-    try:
-        res = requests.post("https://api.dhan.co/orders", headers=headers, json=payload)
-        if res.status_code in [200, 201]:
-            send_telegram_message(f"⚡ *EXIT SUCCESS*\n\nकारण: {reason}\nशेयर: {symbol}\n✅ सौदा काट दिया गया है।")
-            return True
-        else:
-            send_telegram_message(f"❌ *EXIT ERROR*\n{symbol} कटने में फेल: {res.text}")
-    except Exception as e:
-        send_telegram_message(f"❌ *SYSTEM ERROR*\n{e}")
-    return False
-
-# --- 🛡 रिस्क और ट्रेलिंग मैनेजर ---
-def manage_risk(headers, memory):
-    res = requests.get("https://api.dhan.co/positions", headers=headers)
-    if res.status_code != 200: return False
-
-    open_trades_count = 0
-    for pos in res.json():
-        if int(float(pos.get('netQty', 0))) != 0 and pos.get('productType') == 'INTRADAY':
-            open_trades_count += 1
-            symbol = pos['tradingSymbol']
-            sec_id = pos['securityId']
-            net_qty = int(float(pos['netQty']))
-            ltp = float(pos.get('lastPrice', pos.get('ltp', 0))) 
-            
-            is_long = net_qty > 0
-            entry_price = float(pos['buyAvg']) if is_long else float(pos['sellAvg'])
-            pnl_pct = ((ltp - entry_price) / entry_price) * 100 if is_long else ((entry_price - ltp) / entry_price) * 100
-            exit_side = "SELL" if is_long else "BUY"
-            abs_qty = abs(net_qty)
-
-            # Highest PnL अपडेट करना (ट्रेलिंग के लिए)
-            high_pnl = memory["open_trades_high_pnl"].get(symbol, 0)
-            if pnl_pct > high_pnl:
-                memory["open_trades_high_pnl"][symbol] = pnl_pct
-                high_pnl = pnl_pct
-
-            # 🚨 1% स्टॉप लॉस
-            if pnl_pct <= -1.0:
-                if execute_exit_order(symbol, sec_id, abs_qty, exit_side, "🚨 1% Stop-Loss Hit", headers):
-                    memory["open_trades_high_pnl"].pop(symbol, None)
-                    
-            # 🎯 3.5% टारगेट
-            elif pnl_pct >= 3.5:
-                if execute_exit_order(symbol, sec_id, abs_qty, exit_side, "🎯 3.5% Target Hit", headers):
-                    memory["open_trades_high_pnl"].pop(symbol, None)
-                    
-            # 🛡 स्मार्ट ट्रेलिंग: अगर 1.5% के पार जाकर वापस 0.5% पर गिरे तो एग्जिट (Cost-to-Cost+)
-            elif high_pnl >= 1.5 and pnl_pct <= 0.5:
-                if execute_exit_order(symbol, sec_id, abs_qty, exit_side, "🛡 Trailing SL Hit (Profit Locked)", headers):
-                    memory["open_trades_high_pnl"].pop(symbol, None)
-
-    save_memory(memory)
-    return open_trades_count > 0 # Returns True if any trade is open
-
-# --- 🚀 मुख्य इंजन ---
 def main_engine():
-    memory = load_memory()
-    now = datetime.now(IST)
-    current_hour = now.hour
+    mem = load_memory()
+    ist = pytz.timezone('Asia/Kolkata')
+    now = datetime.now(ist)
+    hour = now.hour
+    minute = now.minute
+
+    token = get_latest_token()
+    headers = {"access-token": token, "client-id": CLIENT_ID, "Content-Type": "application/json"}
+
+    # --- 🌅 प्री-ओपन रिपोर्ट (09:00 - 09:14) ---
+    if hour == 9 and minute < 15 and not mem["reports"]["pre_open"]:
+        send_telegram("🌅 *PRE-MARKET REPORT*\n✅ सिस्टम ऑनलाइन है।\n🎯 आज की स्नाइपर स्ट्रेटजी (9:30 AM Entry) लोड हो गई है।")
+        mem["reports"]["pre_open"] = True
+        save_memory(mem)
+
+    # फंड चेक
+    f_res = requests.get("https://api.dhan.co/fundlimit", headers=headers)
+    if f_res.status_code != 200:
+        if "Unauthorized" in f_res.text or f_res.status_code in [401, 403]:
+            send_telegram("🚨 *TOKEN EXPIRED*\nधन का सर्वर एक्सेस नहीं दे रहा है। टेलीग्राम पर नया टोकन भेजें: `TOKEN: your_token`")
+        else:
+            send_telegram(f"⚠️ *API Error:* धन का सर्वर डाउन है: {f_res.text}")
+        return
     
-    access_token = get_dhan_token_from_telegram()
-    headers = {"access-token": access_token, "client-id": CLIENT_ID, "Content-Type": "application/json"}
+    cash = float(f_res.json().get('availabelBalance', 0))
 
-    # 1. 🌅 प्री-मार्केट समरी (9:00 AM - 9:15 AM)
-    if not memory["pre_market_sent"] and current_hour == 9 and now.minute <= 15:
-        f_res = requests.get("https://api.dhan.co/fundlimit", headers=headers)
-        if f_res.status_code == 200:
-            funds = f_res.json().get('availabelBalance', 0)
-            send_telegram_message(f"🌅 *PRE-MARKET OBSERVATION*\n\n✅ सिस्टम ऑनलाइन है।\n💰 कैपिटल: ₹{funds}\n🤖 मशीन तैयार है।")
-            memory["pre_market_sent"] = True
-            save_memory(memory)
-        elif f_res.status_code in [401, 403]:
-            send_telegram_message("🚨 *TOKEN EXPIRED*\nधन सर्वर कनेक्ट नहीं हो रहा। टेलीग्राम पर `TOKEN: आपका_टोकन` भेजें।")
+    # --- 🚀 मार्केट ओपन (9:15 - 9:29) - सिर्फ चेतावनी, ट्रेड नहीं ---
+    if hour == 9 and 15 <= minute < 30 and not mem["reports"]["market_open"]:
+        send_telegram(f"🚀 *MARKET OPEN*\n💰 कैपिटल: ₹{cash}\n⚠️ मार्केट सेटल हो रहा है। पहला ट्रेड *9:30 AM* के बाद ही लिया जाएगा।")
+        mem["reports"]["market_open"] = True
+        save_memory(mem)
+
+    # --- ⏱️ प्रति घंटा अपडेट ---
+    if hour in [10, 11, 12, 13, 14] and minute <= 15 and hour not in mem["hourly"]:
+        send_telegram(f"⏱️ *HOURLY UPDATE ({hour}:00)*\n✅ मशीन सही काम कर रही है।\n💰 बैलेंस: ₹{cash}\n📊 ट्रेड: {len(mem['trades_taken'])}")
+        mem["hourly"].append(hour)
+        save_memory(mem)
+
+    # --- 🌙 EOD रिपोर्ट (15:20 के बाद) ---
+    if (hour == 15 and minute >= 20) or hour > 15:
+        if not mem["reports"]["eod"]:
+            send_telegram(f"🌙 *EOD REPORT*\n🏁 बाज़ार बंद।\n📊 कुल ट्रेड: {len(mem['trades_taken'])}\n💤 सिस्टम स्लीप मोड में जा रहा है।")
+            mem["reports"]["eod"] = True
+            save_memory(mem)
         return
 
-    # 2. 🌙 EOD रिपोर्ट (3:20 PM के बाद)
-    if not memory["eod_sent"] and (current_hour > 15 or (current_hour == 15 and now.minute >= 20)):
-        trades = len(memory["traded_symbols"])
-        send_telegram_message(f"🌙 *EOD REPORT*\n\n🏁 मार्केट क्लोज।\n📊 आज के कुल ट्रेड: {trades}\n💤 सिस्टम स्लीप मोड में।")
-        memory["eod_sent"] = True
-        save_memory(memory)
-        return
+    # ==========================================
+    # 🛡️ ट्रेडिंग लॉजिक (सिर्फ 9:30 AM से 3:15 PM तक)
+    # ==========================================
+    trading_allowed = False
+    if hour == 9 and minute >= 30: trading_allowed = True
+    elif 10 <= hour < 15: trading_allowed = True
+    elif hour == 15 and minute < 15: trading_allowed = True
 
-    # 3. ⏱ हर घंटे की रिपोर्ट
-    if 10 <= current_hour <= 14 and current_hour not in memory["hourly_sent"] and now.minute <= 15:
-        send_telegram_message(f"⏱ *HOURLY UPDATE ({current_hour}:00)*\n\n✅ मशीन लाइव है और बाज़ार स्कैन कर रही है।\nलॉस/प्रॉफिट मैनेजर एक्टिव है।")
-        memory["hourly_sent"].append(current_hour)
-        save_memory(memory)
-
-    # 4. 🛑 ट्रेडिंग लॉजिक (9:15 AM - 3:15 PM)
-    if (current_hour == 9 and now.minute >= 15) or (10 <= current_hour <= 14) or (current_hour == 15 and now.minute <= 15):
+    if trading_allowed:
         
-        # सबसे पहले ओपन पोजीशन का रिस्क मैनेज करो
-        is_trade_open = manage_risk(headers, memory)
+        pos_res = requests.get("https://api.dhan.co/positions", headers=headers)
+        open_trades = []
+        if pos_res.status_code == 200:
+            for p in pos_res.json():
+                if p.get('productType') == 'INTRADAY' and abs(int(float(p.get('netQty', 0)))) > 0:
+                    open_trades.append(p)
 
-        if is_trade_open:
-            return # अगर ट्रेड ओपन है, तो नया ट्रेड मत खोजो (Overtrading Lock)
+        # 1. रिस्क मैनेजमेंट (पोजीशन ओपन होने पर)
+        if open_trades:
+            for pos in open_trades:
+                sym = pos['tradingSymbol']
+                sec_id = pos['securityId']
+                net_qty = int(float(pos['netQty']))
+                ltp = float(pos.get('lastPrice', pos.get('ltp', 0)))
+                is_long = net_qty > 0
+                entry_price = float(pos['buyAvg']) if is_long else float(pos['sellAvg'])
+                
+                pnl_pct = ((ltp - entry_price) / entry_price) * 100 if is_long else ((entry_price - ltp) / entry_price) * 100
+                exit_side = "SELL" if is_long else "BUY"
+                
+                action = None
+                if pnl_pct <= -1.0: action = "🚨 1% SL HIT"
+                elif pnl_pct >= 3.5: action = "🎯 3.5% TARGET HIT"
+                
+                if action:
+                    payload = {
+                        "dhanClientId": CLIENT_ID, "transactionType": exit_side, "exchangeSegment": "NSE_EQ",
+                        "productType": "INTRADAY", "orderType": "MARKET", "validity": "DAY",
+                        "quantity": abs(net_qty), "securityId": str(sec_id), "tradingSymbol": sym, "price": 0
+                    }
+                    requests.post("https://api.dhan.co/orders", headers=headers, json=payload)
+                    send_telegram(f"{action}\n✅ *{sym}* क्लोज किया गया।\n📊 PnL: {pnl_pct:.2f}%")
+            return 
 
-        if len(memory["traded_symbols"]) >= 2:
-            return # दिन के 2 ट्रेड पूरे
+        # 2. नया ट्रेड खोजना (अधिकतम 2 ट्रेड लिमिट)
+        if len(mem["trades_taken"]) >= 2: return
 
-        # फंड चेक और 5x लेवरेज कैलकुलेशन
-        f_res = requests.get("https://api.dhan.co/fundlimit", headers=headers)
-        if f_res.status_code != 200: return
-        cash = float(f_res.json().get('availabelBalance', 0))
-        if cash < 100: return
+        try:
+            url = "https://images.dhan.co/api-data/api-scrip-master.csv"
+            df = pd.read_csv(url, low_memory=False)
+            df_eq = df[(df['SEM_EXM_EXCH_ID'] == 'NSE') & (df['SEM_SERIES'] == 'EQ')]
+            id_map = dict(zip(df_eq['SEM_CUSTOM_SYMBOL'], df_eq['SEM_SMST_SECURITY_ID']))
+            symbol_map = dict(zip(df_eq['SEM_CUSTOM_SYMBOL'], df_eq['SEM_TRADING_SYMBOL']))
+        except: return
 
-        id_map, symbol_map = fetch_dhan_master_ids()
-        if not id_map: return
-
-        # शिकार खोजना (Sniper)
         for s in WATCHLIST:
-            if s in memory["traded_symbols"]: continue
-
+            if s in mem["trades_taken"]: continue 
             sec_id = id_map.get(s)
             exact_sym = symbol_map.get(s)
             if not sec_id or not exact_sym: continue
 
             try:
-                df = yf.Ticker(f"{s}.NS").history(period="1d", interval="15m")
-                if len(df) < 2: continue
-                
-                ltp = df['Close'].iloc[-1]
-                open_p = df['Open'].iloc[0]
+                df_stk = yf.Ticker(f"{s}.NS").history(period="1d", interval="15m")
+                if len(df_stk) < 2: continue
+
+                ltp = df_stk['Close'].iloc[-1]
+                open_p = df_stk['Open'].iloc[0]
                 change = ((ltp - open_p) / open_p) * 100
 
-                # 🚀 स्नाइपर स्ट्रेटजी (1.5% का तगड़ा ब्रेकआउट)
                 if change > 1.5 or change < -1.5:
                     side = "BUY" if change > 1.5 else "SELL"
-                    qty = int((cash * 5) / ltp) # 5x लेवरेज
-                    if qty < 1: qty = 1 
+                    qty = max(1, int((cash * 5) / ltp))
                     
                     payload = {
                         "dhanClientId": CLIENT_ID, "transactionType": side, "exchangeSegment": "NSE_EQ",
@@ -229,17 +178,14 @@ def main_engine():
                     res = requests.post("https://api.dhan.co/orders", headers=headers, json=payload)
                     
                     if res.status_code in [200, 201]:
-                        memory["traded_symbols"].append(s)
-                        save_memory(memory)
-                        send_telegram_message(f"🎯 *SNIPER ENTRY*\n\n📈 शेयर: {s}\n🚀 मूव: {change:.2f}%\n✅ 5x लेवरेज के साथ आर्डर लगा!")
-                        break # एक बार में एक ट्रेड
-                    elif res.status_code in [401, 403]:
-                        send_telegram_message("🚨 *ORDER REJECTED: TOKEN ISSUE*\nटेलीग्राम पर नया टोकन भेजें।")
-                        break
+                        send_telegram(f"🔫 *SNIPER ENTRY (After 9:30)*\n📈 शेयर: {s}\n🔄 दिशा: {side}\n📦 क्वांटिटी: {qty}\n📊 मूव: {change:.2f}%")
+                        mem["trades_taken"].append(s)
+                        save_memory(mem)
+                        break 
             except: continue
 
 if __name__ == "__main__":
     try:
         main_engine()
     except Exception as e:
-        send_telegram_message(f"🚨 *CRITICAL CRASH*\nमशीन क्रैश हो गई है:\n`{e}`")
+        send_telegram(f"🚨 *SYSTEM FATAL CRASH*\nएरर:\n`{e}`")
