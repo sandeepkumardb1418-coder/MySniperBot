@@ -51,16 +51,14 @@ def save_memory(mem):
         json.dump(mem, f)
 
 def main_engine():
+    # 🚨 यह रहा हमारा टेस्टिंग मैसेज (बिल्कुल सही स्पेस के साथ)
+    send_telegram("✅ *CONNECTION TEST:* गिटहब और टेलीग्राम 100% जुड़ चुके हैं! संदीप भाई, मशीन रेडी है।")
+    
     mem = load_memory()
     ist = pytz.timezone('Asia/Kolkata')
     now = datetime.now(ist)
     hour = now.hour
     minute = now.minute
-    def main_engine():
-    send_telegram("✅ *CONNECTION TEST:* गिटहब और टेलीग्राम 100% जुड़ चुके हैं! संदीप भाई, मशीन रेडी है।")
-    
-    mem = load_memory()
-    # ... (नीचे का बाकी कोड वैसे ही रहने दें)
 
     token = get_latest_token()
     headers = {"access-token": token, "client-id": CLIENT_ID, "Content-Type": "application/json"}
