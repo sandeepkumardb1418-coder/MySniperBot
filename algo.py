@@ -17,10 +17,16 @@ WATCHLIST = [
 MEMORY_FILE = "memory.json"
 
 def send_telegram(text):
+    """एक्स-रे मोड: अब यह गिटहब को बताएगा कि क्या गड़बड़ है"""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
-    try: requests.post(url, json=payload)
-    except: pass
+    
+    print(f"👉 टेलीग्राम को मैसेज भेजा जा रहा है...")
+    try: 
+        res = requests.post(url, json=payload)
+        print(f"👉 टेलीग्राम का जवाब: {res.text}") # यह लाइन असली बीमारी बताएगी
+    except Exception as e: 
+        print(f"❌ इंटरनेट/सिस्टम एरर: {e}")
 
 def get_latest_token():
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
@@ -51,7 +57,7 @@ def save_memory(mem):
         json.dump(mem, f)
 
 def main_engine():
-    # 🚨 यह रहा हमारा टेस्टिंग मैसेज (बिल्कुल सही स्पेस के साथ)
+    print("🚀 मशीन जाग गई है! कनेक्शन टेस्ट शुरू...")
     send_telegram("✅ *CONNECTION TEST:* गिटहब और टेलीग्राम 100% जुड़ चुके हैं! संदीप भाई, मशीन रेडी है।")
     
     mem = load_memory()
@@ -80,7 +86,7 @@ def main_engine():
     
     cash = float(f_res.json().get('availabelBalance', 0))
 
-    # --- 🚀 मार्केट ओपन (9:15 - 9:29) - सिर्फ चेतावनी, ट्रेड नहीं ---
+    # --- 🚀 मार्केट ओपन (9:15 - 9:29) ---
     if hour == 9 and 15 <= minute < 30 and not mem["reports"]["market_open"]:
         send_telegram(f"🚀 *MARKET OPEN*\n💰 कैपिटल: ₹{cash}\n⚠️ मार्केट सेटल हो रहा है। पहला ट्रेड *9:30 AM* के बाद ही लिया जाएगा।")
         mem["reports"]["market_open"] = True
@@ -101,7 +107,7 @@ def main_engine():
         return
 
     # ==========================================
-    # 🛡️ ट्रेडिंग लॉजिक (सिर्फ 9:30 AM से 3:15 PM तक)
+    # 🛡️ ट्रेडिंग लॉजिक (9:30 AM से 3:15 PM)
     # ==========================================
     trading_allowed = False
     if hour == 9 and minute >= 30: trading_allowed = True
@@ -109,7 +115,6 @@ def main_engine():
     elif hour == 15 and minute < 15: trading_allowed = True
 
     if trading_allowed:
-        
         pos_res = requests.get("https://api.dhan.co/positions", headers=headers)
         open_trades = []
         if pos_res.status_code == 200:
@@ -117,7 +122,6 @@ def main_engine():
                 if p.get('productType') == 'INTRADAY' and abs(int(float(p.get('netQty', 0)))) > 0:
                     open_trades.append(p)
 
-        # 1. रिस्क मैनेजमेंट (पोजीशन ओपन होने पर)
         if open_trades:
             for pos in open_trades:
                 sym = pos['tradingSymbol']
@@ -144,7 +148,6 @@ def main_engine():
                     send_telegram(f"{action}\n✅ *{sym}* क्लोज किया गया।\n📊 PnL: {pnl_pct:.2f}%")
             return 
 
-        # 2. नया ट्रेड खोजना (अधिकतम 2 ट्रेड लिमिट)
         if len(mem["trades_taken"]) >= 2: return
 
         try:
@@ -191,4 +194,4 @@ if __name__ == "__main__":
     try:
         main_engine()
     except Exception as e:
-        send_telegram(f"🚨 *SYSTEM FATAL CRASH*\nएरर:\n`{e}`")
+        print(f"🚨 FATAL ERROR: {e}")
