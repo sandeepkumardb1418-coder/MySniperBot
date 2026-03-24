@@ -5,7 +5,7 @@ CLIENT_ID = str(os.environ.get("DHAN_CLIENT_ID")).strip()
 ACCESS_TOKEN = str(os.environ.get("DHAN_ACCESS_TOKEN")).strip()
 HEADERS = {"access-token": ACCESS_TOKEN, "client-id": CLIENT_ID, "Content-Type": "application/json"}
 
-# Nifty 500 के टॉप स्टॉक्स 
+# Nifty 500 टॉप स्टॉक्स की लिस्ट
 WATCHLIST = [
     "ABB", "ACC", "ADANIENT", "ADANIPORTS", "ADANIPOWER", "AMBUJACEM", "APOLLOHOSP", "ASIANPAINT", "AUBANK", "AXISBANK", 
     "BAJAJ-AUTO", "BAJFINANCE", "BAJAJFINSV", "BALKRISIND", "BANDHANBNK", "BANKBARODA", "BEL", "BERGEPAINT", "BHARATFORG", 
@@ -21,62 +21,74 @@ WATCHLIST = [
     "TECHM", "TITAN", "TRENT", "TVSMOTOR", "ULTRACEMCO", "UPL", "VEDL", "VOLTAS", "WIPRO", "ZOMATO", "AWL", "RVNL"
 ]
 
-def get_dhan_positions():
-    """धन API से आज की सारी पोजीशन मंगाना (ब्रोकर की लूट रोकने के लिए)"""
+def analyze_previous_orders_and_positions():
+    """मशीन का दिमाग: ऑर्डर्स और पोजीशन का आंकलन करेगा"""
+    traded_symbols = set()
+    open_trades_count = 0
+    total_trades_taken = 0
+
+    # 1. ऑर्डर हिस्ट्री चेक करना (ताकि कोई पुराना कटा हुआ सौदा भी याद रहे)
     try:
-        res = requests.get("https://api.dhan.co/positions", headers=HEADERS)
-        if res.status_code == 200:
-            return res.json()
+        ord_res = requests.get("https://api.dhan.co/orders", headers=HEADERS)
+        if ord_res.status_code == 200:
+            for o in ord_res.json():
+                if o.get('orderStatus') == 'TRADED':
+                    sym = str(o.get('tradingSymbol', '')).split('-')[0]
+                    traded_symbols.add(sym)
+    except Exception as e:
+        print("ऑर्डर चेक फेल:", e)
+
+    # 2. करेंट ओपन पोजीशन चेक करना
+    try:
+        pos_res = requests.get("https://api.dhan.co/positions", headers=HEADERS)
+        if pos_res.status_code == 200:
+            for p in pos_res.json():
+                if p.get('productType') == 'INTRADAY':
+                    if abs(int(float(p.get('netQty', 0)))) > 0:
+                        open_trades_count += 1
     except:
         pass
-    return []
-
-def execute_sniper():
-    positions = get_dhan_positions()
     
-    open_trades = 0
-    traded_symbols_today = set()
+    total_trades_taken = len(traded_symbols)
+    return traded_symbols, open_trades_count, total_trades_taken
 
-    for p in positions:
-        if p.get('productType') == 'INTRADAY':
-            # सिंबल का नाम निकाल रहे हैं (जैसे ABB-EQ से सिर्फ ABB)
-            sym = str(p.get('tradingSymbol', '')).split('-')[0]
-            traded_symbols_today.add(sym)
-            
-            # अगर क्वांटिटी 0 नहीं है, मतलब ट्रेड अभी चल रहा है
-            if abs(int(float(p.get('netQty', 0)))) > 0:
-                open_trades += 1
+def execute_smart_sniper():
+    # --- स्मार्ट आंकलन शुरू ---
+    traded_symbols, open_trades, total_trades = analyze_previous_orders_and_positions()
 
-    # 🚨 ब्रह्मास्त्र नियम 1: अगर 1 भी ट्रेड ओपन है, तो मशीन तुरंत बंद!
     if open_trades > 0:
-        print("⏳ एक पोजीशन पहले से चालू है। गिटहब मिनट बचाने के लिए मशीन बंद हो रही है।")
+        print("⏳ एक ट्रेड अभी चालू है। मशीन ओवरट्रेडिंग रोकने के लिए स्लीप मोड में जा रही है।")
         return
 
-    # 🚨 ब्रह्मास्त्र नियम 2: दिन के 2 ट्रेड पूरे हो गए, तो मशीन बंद!
-    if len(traded_symbols_today) >= 2:
-        print(f"🛑 आज के 2 बेहतरीन ट्रेड पूरे हो चुके हैं ({traded_symbols_today})। सिस्टम आज के लिए बंद।")
+    if total_trades >= 2:
+        print(f"🛑 आज के 2 ट्रेड ({traded_symbols}) पूरे हो चुके हैं। मशीन आज के लिए परमानेंट बंद।")
         return
 
-    # फंड चेक
+    # 🧠 एडवांस थिंकिंग: अगर 1 ट्रेड हो चुका है (यानी शायद लॉस हुआ है), तो अगली बार ज़्यादा सेफ एंट्री लो
+    required_momentum = 1.5
+    if total_trades == 1:
+        print("⚠️ 1 ट्रेड हो चुका है। रिकवरी के लिए अब 'बेहतरीन अवसर' (2.0% मूव) की तलाश है...")
+        required_momentum = 2.0 
+
+    # --- फंड चेक ---
     f_res = requests.get("https://api.dhan.co/fundlimit", headers=HEADERS)
     if f_res.status_code != 200: return
     cash = float(f_res.json().get('availabelBalance', 0))
     if cash < 100: return
 
-    # धन मास्टर ID सिंक
+    # --- ID सिंक ---
     try:
         url = "https://images.dhan.co/api-data/api-scrip-master.csv"
         df = pd.read_csv(url, low_memory=False)
         df_eq = df[(df['SEM_EXM_EXCH_ID'] == 'NSE') & (df['SEM_SERIES'] == 'EQ')]
         id_map = dict(zip(df_eq['SEM_CUSTOM_SYMBOL'], df_eq['SEM_SMST_SECURITY_ID']))
         symbol_map = dict(zip(df_eq['SEM_CUSTOM_SYMBOL'], df_eq['SEM_TRADING_SYMBOL']))
-    except:
-        return
+    except: return
 
-    # शिकार खोजना शुरू
+    # --- शिकार खोजना ---
     for s in WATCHLIST:
-        # 🚨 ब्रह्मास्त्र नियम 3: अगर इस शेयर में आज एक बार भी ट्रेड हो चुका है, तो इसे छोड़ दो!
-        if s in traded_symbols_today:
+        # 🚨 सबसे सख्त नियम: अगर आज इस शेयर का नाम ऑर्डर बुक में है, तो इसे छुओ भी मत
+        if s in traded_symbols:
             continue
 
         sec_id = id_map.get(s)
@@ -84,7 +96,6 @@ def execute_sniper():
         if not sec_id or not exact_symbol: continue
 
         try:
-            # पिछले 15 मिनट का डेटा
             df = yf.Ticker(f"{s}.NS").history(period="1d", interval="15m")
             if len(df) < 2: continue
 
@@ -92,13 +103,13 @@ def execute_sniper():
             open_p = df['Open'].iloc[0]
             change = ((ltp - open_p) / open_p) * 100
 
-            # 🚀 सॉलिड अवसर (1.5% का ट्रेंड)
-            if change > 1.5 or change < -1.5:
-                side = "BUY" if change > 1.5 else "SELL"
+            # 🚀 स्मार्ट शर्त: नॉर्मल दिन 1.5%, रिकवरी के लिए 2.0%
+            if change > required_momentum or change < -required_momentum:
+                side = "BUY" if change > required_momentum else "SELL"
                 qty = int((cash * 4) / ltp)
                 if qty < 1: qty = 1 
                 
-                print(f"🎯 बेहतरीन अवसर मिला: {s} | मूव: {change:.2f}% | साइड: {side}")
+                print(f"🎯 बेहतरीन अवसर लॉक: {s} | मूव: {change:.2f}% | साइड: {side}")
                 
                 payload = {
                     "dhanClientId": CLIENT_ID, "transactionType": side, "exchangeSegment": "NSE_EQ",
@@ -107,9 +118,10 @@ def execute_sniper():
                 }
                 res = requests.post("https://api.dhan.co/orders", headers=HEADERS, json=payload)
                 if res.status_code in [200, 201]:
-                    print(f"🔥 {s} में 1 फ्रेश ट्रेड लग गया! लूप ब्रेक किया जा रहा है।")
-                    break # एक ट्रेड लगते ही सर्च हमेशा के लिए बंद!
+                    print(f"🔥 {s} में स्मार्ट ट्रेड लग गया! नया शिकार खोजना बंद।")
+                    break
         except: continue
 
 if __name__ == "__main__":
-    execute_sniper()
+    print(f"🚀 AI असेसमेंट इंजन स्टार्ट... ({datetime.now().strftime('%H:%M:%S')})")
+    execute_smart_sniper()
