@@ -17,42 +17,59 @@ def send_telegram(text):
     try: requests.post(url, json=payload, timeout=5)
     except: pass
 
-def get_live_positions():
-    """धन अकाउंट चेक करना और SL/Target मैनेज करना"""
+def get_account_summary():
+    """धन खाते से बैलेंस और पेंडिंग आर्डर निकालना"""
+    funds = "Error"
+    pending_orders = 0
+    
+    try:
+        # फंड चेक
+        res_funds = requests.get("https://api.dhan.co/fundlimit", headers=HEADERS, timeout=5)
+        if res_funds.status_code == 200:
+            funds = res_funds.json().get("availabelBalance", 0)
+            
+        # पेंडिंग आर्डर चेक
+        res_orders = requests.get("https://api.dhan.co/orders", headers=HEADERS, timeout=5)
+        if res_orders.status_code == 200:
+            orders = res_orders.json()
+            pending_orders = sum(1 for o in orders if o.get('orderStatus') == 'PENDING')
+    except:
+        pass
+    return funds, pending_orders
+
+def manage_live_positions():
+    """पोजीशन चेक करना और SL/Target काटना"""
     url = "https://api.dhan.co/positions"
+    active_sym = "कोई नहीं"
+    current_pnl = 0.0
+    has_active = False
+    
     try:
         res = requests.get(url, headers=HEADERS, timeout=10)
-        
-        # 1. टोकन एक्सपायर चेक
-        if res.status_code == 401:
-            send_telegram("🚨 *TOKEN EXPIRED:* धन का एक्सेस टोकन बदलें!")
-            return None, True
-            
-        if res.status_code != 200:
-            return None, False
+        if res.status_code == 401: return "TOKEN_EXPIRED", 0, False
+        if res.status_code != 200: return active_sym, current_pnl, False
             
         positions = res.json()
-        active_trades = False
         
         for pos in positions:
             net_qty = int(float(pos.get('netQty', 0)))
             if net_qty != 0 and pos.get('productType') == 'INTRADAY':
-                active_trades = True
-                sym = pos['tradingSymbol']
+                has_active = True
+                active_sym = pos['tradingSymbol']
                 
-                # 2. THE FIX: अगर API 0 भाव भेजता है, तो इग्नोर करो (फर्जी -100% PnL से बचाव)
                 ltp = float(pos.get('lastPrice', pos.get('ltp', 0)))
-                if ltp <= 0: continue 
+                if ltp <= 0: continue # Zero LTP Bug Fix
                 
                 buy_avg = float(pos.get('buyAvg', 0))
                 sell_avg = float(pos.get('sellAvg', 0))
                 is_long = net_qty > 0
                 entry_price = buy_avg if is_long else sell_avg
                 
-                # 3. सटीक PnL गणित
+                # PnL Calculation
                 pnl_pct = ((ltp - entry_price) / entry_price) * 100 if is_long else ((entry_price - ltp) / entry_price) * 100
-
-                # 4. 1% SL या 3.5% Target
+                current_pnl = pnl_pct
+                
+                # Exit Logic
                 action = None
                 if pnl_pct <= -1.0: action = "🚨 *1% STOP-LOSS HIT*"
                 elif pnl_pct >= 3.5: action = "🎯 *3.5% TARGET HIT*"
@@ -62,66 +79,80 @@ def get_live_positions():
                     payload = {
                         "dhanClientId": CLIENT_ID, "transactionType": exit_side, "exchangeSegment": pos.get('exchangeSegment', 'NSE_EQ'),
                         "productType": "INTRADAY", "orderType": "MARKET", "validity": "DAY",
-                        "quantity": abs(net_qty), "securityId": str(pos.get('securityId', '')), "tradingSymbol": sym, "price": 0
+                        "quantity": abs(net_qty), "securityId": str(pos.get('securityId', '')), "tradingSymbol": active_sym, "price": 0
                     }
                     order_res = requests.post("https://api.dhan.co/orders", headers=HEADERS, json=payload)
-                    
                     if order_res.status_code in [200, 201]:
-                        send_telegram(f"{action}\n✅ *{sym}* की पोजीशन क्लोज कर दी गई है।\n📊 बुक PnL: `{pnl_pct:.2f}%`\nभाव: ₹{ltp}")
-                    else:
-                        send_telegram(f"❌ *EXIT FAILED:*\nशेयर: {sym}\nAPI Error: {order_res.text}")
+                        send_telegram(f"{action}\n✅ *{active_sym}* पोजीशन क्लोज्ड।\n📊 बुक PnL: `{pnl_pct:.2f}%`")
+                        has_active = False
+                        active_sym = "कोई नहीं"
         
-        return active_trades, False
+        return active_sym, current_pnl, has_active
     except Exception as e:
-        send_telegram(f"⚠️ *Position Fetch Error:* {e}")
-        return None, False
-
-def place_new_order(sym, signal):
-    """नया ट्रेड लेना और टेलीग्राम पर बताना"""
-    qty = 10 # शेयर की क्वांटिटी 
-    side = "BUY" if signal == "BUY" else "SELL"
-    
-    payload = {
-        "dhanClientId": CLIENT_ID, "transactionType": side, "exchangeSegment": "NSE_EQ",
-        "productType": "INTRADAY", "orderType": "MARKET", "validity": "DAY",
-        "quantity": qty, "securityId": "11536", "tradingSymbol": sym, "price": 0
-    }
-    
-    order_res = requests.post("https://api.dhan.co/orders", headers=HEADERS, json=payload)
-    
-    if order_res.status_code in [200, 201]:
-        send_telegram(f"🚀 *AI SNIPER ENTRY*\n✅ शेयर: {sym}\n🎯 दिशा: {signal}\n📈 क्वांटिटी: {qty}")
-    else:
-        # अगर आर्डर नहीं लगता है तो भी टेलीग्राम पर बताएगा (Security ID मैपिंग के लिए)
-        send_telegram(f"🔍 *AI SIGNAL FOUND* (Order Failed/Testing)\nशेयर: {sym}\nदिशा: {signal}\nAPI Msg: {order_res.text}")
+        return f"Error: {str(e)[:20]}", 0, False
 
 def main():
     ist = pytz.timezone('Asia/Kolkata')
     now = datetime.now(ist)
+    time_str = now.strftime('%I:%M %p')
     
-    # 9:15 AM से 3:15 PM तक ही काम करेगा
+    # समय की पाबंदी
     if not (9 <= now.hour < 15 or (now.hour == 15 and now.minute <= 15)):
-        if now.hour == 9 and now.minute < 15: pass
-        else: return
+        return
 
-    # 1. धन अकाउंट की लाइव पोजीशन चेक करें
-    has_active_trades, token_expired = get_live_positions()
+    # 1. डेटा कलेक्ट करना
+    funds, pending_orders = get_account_summary()
+    active_sym, current_pnl, has_active = manage_live_positions()
     
-    if token_expired: return 
-    if has_active_trades: return # अगर पहले से ट्रेड चल रहा है तो नया मत लो
+    if active_sym == "TOKEN_EXPIRED":
+        send_telegram("🚨 *CRITICAL ERROR:* धन का टोकन एक्सपायर हो गया है। कृपया नया टोकन अपडेट करें।")
+        return
 
-    # 2. अगर अकाउंट खाली है, तो नया हाई-क्वालिटी ट्रेड ढूंढो
+    # 2. ट्रेडिंग ब्रेन और स्कैनिंग
     brain = TradingBrain()
     watchlist = ["RELIANCE", "TCS", "HDFCBANK", "ICICIBANK", "SBIN", "INFY", "ITC", "BHARTIARTL"]
-    
-    best_trade = brain.get_best_trade(watchlist)
+    best_trade, global_trend = brain.get_best_trade(watchlist)
 
-    # 3. अगर ट्रेड मिला, तो आर्डर मारो
-    if best_trade:
-        place_new_order(best_trade['symbol'], best_trade['signal'])
+    # 3. कारण तय करना कि आर्डर क्यों नहीं लिया
+    reason = ""
+    if has_active:
+        reason = f"पहले से {active_sym} में ट्रेड चल रहा है। रूल के अनुसार एक बार में एक ही ट्रेड।"
+    elif best_trade:
+        reason = f"✅ ऑपरेटर सिग्नल मिल गया है! {best_trade['symbol']} में {best_trade['signal']} आर्डर लगाया जा रहा है।"
+    else:
+        reason = "किसी भी शेयर में 'ऑपरेटर वॉल्यूम (2x)' और '90% से ज्यादा एक्यूरेसी' वाला ब्रेकआउट नहीं मिला। पैसा सुरक्षित रखा गया है।"
+
+    # 4. टेलीग्राम पर लाइव रिपोर्ट (डैशबोर्ड) भेजना
+    dashboard = f"""📊 *AI SYSTEM REPORT* 📊
+⏰ समय: {time_str}
+📈 निफ्टी ट्रेंड: {global_trend}
+
+💰 *बैलेंस / फंड:* ₹{funds}
+📦 *लाइव पोजीशन:* {active_sym} (PnL: {current_pnl:.2f}%)
+📝 *पेंडिंग आर्डर:* {pending_orders}
+
+❓ *AI स्टेटस / अगला आर्डर:*
+{reason}
+
+🛡️ _मशीन 5 मिनट बाद फिर से स्कैन करेगी।_"""
+
+    send_telegram(dashboard)
+
+    # 5. अगर नया आर्डर मिला है, तो लगाओ
+    if best_trade and not has_active:
+        sym = best_trade['symbol']
+        sig = best_trade['signal']
+        payload = {
+            "dhanClientId": CLIENT_ID, "transactionType": "BUY" if sig == "BUY" else "SELL", 
+            "exchangeSegment": "NSE_EQ", "productType": "INTRADAY", "orderType": "MARKET", 
+            "validity": "DAY", "quantity": 10, "securityId": "11536", "tradingSymbol": sym, "price": 0
+        }
+        res = requests.post("https://api.dhan.co/orders", headers=HEADERS, json=payload)
+        if res.status_code not in [200, 201]:
+            send_telegram(f"❌ *ORDER FAILED:* {sym} में आर्डर रिजेक्ट हो गया। API Error: {res.text}")
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        send_telegram(f"🚨 *CRITICAL BUG*\nमशीन क्रैश: {str(e)}")
+        send_telegram(f"🚨 *SYSTEM CRASH:* गिटहब मशीन में तकनीकी खराबी: {str(e)}")
