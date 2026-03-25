@@ -1,7 +1,7 @@
-name: AI_SNIPER_V4
+name: ADVANCED_AI_SNIPER
 on:
   schedule:
-    - cron: '*/5 3-10 * * 1-5' # हर 5 मिनट (IST 8:30 AM - 3:30 PM)
+    - cron: '*/5 3-10 * * 1-5' # 8:30 AM to 3:30 PM IST
   workflow_dispatch:
 
 jobs:
@@ -16,8 +16,8 @@ jobs:
         with:
           python-version: '3.9'
       - name: Install dependencies
-        run: pip install requests pandas yfinance pytz
-      - name: Run Sniper
+        run: pip install requests pandas yfinance pytz numpy
+      - name: Execute Algo
         env:
           DHAN_CLIENT_ID: ${{ secrets.DHAN_CLIENT_ID }}
           DHAN_ACCESS_TOKEN: ${{ secrets.DHAN_ACCESS_TOKEN }}
